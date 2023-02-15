@@ -474,34 +474,7 @@ class PokeEnv(PybulletEnv):
         self._dd.clear_visualization_after('{}a'.format(base_name), j + 1)
 
     def visualize_contact_set(self, contact_set: tracking.ContactSet):
-        if isinstance(contact_set, tracking.ContactSetHard):
-            # clear all previous markers because we don't know which one was removed
-            if len(self._contact_debug_names) > len(contact_set):
-                for name in self._contact_debug_names:
-                    self._dd.clear_visualizations(name)
-                self._contact_debug_names = []
-            for i, c in enumerate(contact_set):
-                color, u_color = state_action_color_pairs[i % len(state_action_color_pairs)]
-                if i >= len(self._contact_debug_names):
-                    self._contact_debug_names.append(set())
-                # represent the uncertainty of the center point
-                name = 'cp{}'.format(i)
-                eigval, eigvec = torch.eig(c.cov[0], eigenvectors=True)
-                yx_ratio = eigval[1, 0] / eigval[0, 0]
-                rot = math.atan2(eigvec[1, 0], eigvec[0, 0])
-                l = eigval[0, 0] * 100
-                w = c.weight
-                self._dd.draw_point(name, self.get_ee_pos(c.mu[0]), length=l.item(), length_ratio=yx_ratio, rot=rot,
-                                    color=color)
-                self._contact_debug_names[i].add(name)
-
-                base_name = str(i)
-                self.visualize_state_actions(base_name, c.points, c.actions, color, u_color, 0.1 * w)
-
-                for j in range(len(c.points)):
-                    self._contact_debug_names[i].add('{}{}'.format(base_name, j))
-                    self._contact_debug_names[i].add('{}{}a'.format(base_name, j))
-        elif isinstance(contact_set, tracking.ContactSetSoft):
+        if isinstance(contact_set, tracking.ContactSetSoft):
             pts = contact_set.get_posterior_points()
             if pts is None:
                 return
