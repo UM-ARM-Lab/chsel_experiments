@@ -55,6 +55,7 @@ dependencies = [# Optional
     'torch',
     'numpy',
     'matplotlib',
+    'stucco',
     'chsel',
     'arm-base-experiments'
 ]
@@ -69,6 +70,7 @@ dependencies = [# Optional
 # projects.
 [project.optional-dependencies] # Optional
 test = ["pytest"]
+real = ['stucco-experiments']
 
 # List URLs that are relevant to your project
 #
