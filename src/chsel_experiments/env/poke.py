@@ -20,11 +20,10 @@ from stucco.movable_sdf import PlanarMovableSDF
 from base_experiments.env.env import InfoKeys, TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, \
     draw_AABB
 from base_experiments.env.panda import PandaJustGripperID
-from base_experiments import cfg
+from base_experiments import cfg, sdf
 from stucco import tracking
-from stucco.defines import NO_CONTACT_ID
+from base_experiments.defines import NO_CONTACT_ID
 from stucco.detection import ContactDetector, ContactSensor
-from stucco import sdf
 from pytorch_volumetric import voxel
 
 from view_animator import animate_view_in_background
