@@ -7,10 +7,12 @@ from chsel_experiments import registration
 import logging
 import os
 from datetime import datetime
+from base_experiments.util import MakedirsFileHandler
+
 
 logger = logging.getLogger(__file__)
 ch = logging.StreamHandler()
-fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}_run_many.log".format(datetime.now())))
+fh = MakedirsFileHandler(os.path.join(cfg.LOG_DIR, "{}_run_many.log".format(datetime.now())))
 
 logging.basicConfig(level=logging.INFO, force=True,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',

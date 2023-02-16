@@ -19,6 +19,8 @@ from chsel_experiments.env import poke_real_nonros
 from stucco import tracking
 from stucco.tracking import ContactSet
 from victor_hardware_interface_msgs.msg import ControlMode
+from base_experiments.util import MakedirsFileHandler
+
 
 try:
     import rospy
@@ -35,7 +37,7 @@ ask_before_moving = True
 CONTACT_POINT_SIZE = (0.01, 0.01, 0.3)
 
 ch = logging.StreamHandler()
-fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
+fh = MakedirsFileHandler(os.path.join(cfg.LOG_DIR, "{}.log".format(datetime.now())))
 
 logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',

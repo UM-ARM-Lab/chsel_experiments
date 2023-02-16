@@ -37,7 +37,7 @@ from chsel_experiments import registration
 from base_experiments import cfg, serialization
 from stucco_experiments.baselines.cluster import OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
 from chsel_experiments.env import poke
-from chsel_experiments.env import obj_factory_map, level_to_obj_map
+from chsel_experiments.env.poke import obj_factory_map, level_to_obj_map
 from chsel_experiments.env_getters.poke import PokeGetter
 from pytorch_volumetric.chamfer import batch_chamfer_dist
 from base_experiments.sdf import draw_pose_distribution
@@ -46,11 +46,12 @@ from pytorch_volumetric.sdf import sample_mesh_points
 from arm_pytorch_utilities.controller import Controller
 from stucco_experiments.retrieval_controller import TrackingMethod, OurSoftTrackingMethod, \
     SklearnTrackingMethod, PHDFilterTrackingMethod
+from base_experiments.util import MakedirsFileHandler
 
 plt.switch_backend('Qt5Agg')
 
 ch = logging.StreamHandler()
-fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
+fh = MakedirsFileHandler(os.path.join(cfg.LOG_DIR, "{}.log".format(datetime.now())))
 
 logging.basicConfig(level=logging.INFO, force=True,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',

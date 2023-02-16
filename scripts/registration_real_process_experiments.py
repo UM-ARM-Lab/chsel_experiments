@@ -25,6 +25,8 @@ from chsel_experiments.experiments import registration_nopytorch3d
 from chsel import initialization
 from pytorch_kinematics.transforms.rotation_conversions import matrix_to_pos_rot
 from pytorch_volumetric import voxel
+from base_experiments.util import MakedirsFileHandler
+
 
 try:
     import rospy
@@ -38,7 +40,7 @@ except RuntimeError as e:
     print("Proceeding without ROS: {}".format(e))
 
 ch = logging.StreamHandler()
-fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
+fh = MakedirsFileHandler(os.path.join(cfg.LOG_DIR, "{}.log".format(datetime.now())))
 
 logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',

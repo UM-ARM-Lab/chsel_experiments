@@ -19,15 +19,17 @@ from pytorch_volumetric.chamfer import batch_chamfer_dist
 from chsel_experiments.env import poke_real_nonros
 from chsel_experiments.experiments import registration, registration_nopytorch3d
 from pytorch3d.ops.points_alignment import SimilarityTransform
+from base_experiments.util import MakedirsFileHandler
+
 
 from datetime import datetime
 
-from chsel_experiments.registration.methods import init_random_transform_with_given_init
+from stucco_experiments.registration import init_random_transform_with_given_init
 from pytorch_volumetric.sdf import sample_mesh_points
 import logging
 
 ch = logging.StreamHandler()
-fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
+fh = MakedirsFileHandler(os.path.join(cfg.LOG_DIR, "{}.log".format(datetime.now())))
 
 logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
