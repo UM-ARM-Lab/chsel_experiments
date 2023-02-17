@@ -1,3 +1,4 @@
+import os
 import enum
 
 import pybullet as p
@@ -8,6 +9,7 @@ import pytorch_volumetric.sdf
 from pytorch_volumetric import voxel
 
 from chsel_experiments.env.poke import YCBObjectFactory
+from base_experiments import cfg
 
 
 class Levels(enum.IntEnum):
@@ -72,7 +74,8 @@ class PokeRealNoRosEnv:
         obj_frame_sdf = pytorch_volumetric.sdf.MeshSDF(self.obj_factory)
         sdf_resolution = 0.005
         self.target_sdf = pytorch_volumetric.sdf.CachedSDF(self.obj_factory.name, sdf_resolution, ranges, obj_frame_sdf,
-                                                           device=device, clean_cache=clean_cache)
+                                                           device=device, clean_cache=clean_cache,
+                                                           cache_path=os.path.join(cfg.DATA_DIR, 'sdf_cache.pkl'))
 
     def reset(self):
         self.free_voxels = voxel.VoxelGrid(self.freespace_resolution, self.freespace_ranges, device=self.device)

@@ -1,5 +1,4 @@
 import logging
-import math
 import pybullet as p
 import time
 import enum
@@ -231,7 +230,7 @@ class PokeEnv(PybulletEnv):
                  freespace_voxel_resolution=0.025,
                  clean_cache=False,
                  immovable_target=True,
-                 rotating=True,
+                 rotating=False,
                  **kwargs):
         """
         :param environment_level: what obstacles should show up in the environment
@@ -856,7 +855,8 @@ class PokeEnv(PybulletEnv):
         # SDF for the object
         obj_frame_sdf = pytorch_volumetric.sdf.MeshSDF(self.obj_factory)
         self.target_sdf = pytorch_volumetric.sdf.CachedSDF(self.obj_factory.name, self.sdf_resolution, self.ranges,
-                                                           obj_frame_sdf, device=self.device, clean_cache=self.clean_cache)
+                                                           obj_frame_sdf, device=self.device, clean_cache=self.clean_cache,
+                                                           cache_path=os.path.join(cfg.DATA_DIR, 'sdf_cache.pkl'))
         if self.clean_cache:
             draw_AABB(self.vis, self.ranges)
             # display the voxels created for this sdf
@@ -873,7 +873,8 @@ class PokeEnv(PybulletEnv):
         robot_range = pybullet_obj_range(self.robot_id, 0.02)
         # TODO consider if need the fingers of the gripper to sweep out freespace, or if that's too close
         self.robot_sdf = pytorch_volumetric.sdf.CachedSDF("floating_gripper", 0.005, robot_range,
-                                                          robot_frame_sdf, device=self.device, clean_cache=self.clean_cache)
+                                                          robot_frame_sdf, device=self.device, clean_cache=self.clean_cache,
+                                                          cache_path=os.path.join(cfg.DATA_DIR, 'sdf_cache.pkl'))
         self.robot_interior_points_orig = self.robot_sdf.get_filtered_points(lambda voxel_sdf: voxel_sdf < -0.01)
 
         if self.clean_cache:

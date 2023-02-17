@@ -10,14 +10,18 @@ from pytorch3d.ops import iterative_closest_point
 from pytorch3d.ops.points_alignment import SimilarityTransform
 import pytorch3d.transforms as tf
 
+from chsel import quality_diversity
+
 from base_experiments.env.env import draw_AABB
 from chsel_experiments.registration.sgd import iterative_closest_point_sgd
 from chsel_experiments.registration import volumetric
 from chsel_experiments.registration.medial_constraints import MedialConstraintCost
 from base_experiments.sdf import draw_pose_distribution
+from base_experiments import cfg
 from pytorch_volumetric.sdf import ObjectFrameSDF
-from chsel import quality_diversity
 import logging
+
+from stucco_experiments.registration import init_random_transform_with_given_init
 
 logger = logging.getLogger(__file__)
 
@@ -214,71 +218,6 @@ def nearest_neighbor(src, dst):
     return distances.ravel(), indices.ravel()
 
 
-def nearest_neighbor_torch(src, dst):
-    '''
-    Find the nearest (Euclidean) neighbor in dst for each point in src
-    Input:
-        src: bxMxm array of points
-        dst: bxNxm array of points
-    Output:
-        distances: Euclidean distances of the nearest neighbor
-        indices: dst indices of the nearest neighbor
-    '''
-
-    dist = torch.cdist(src, dst)
-    knn = dist.topk(1, largest=False)
-    return knn
-
-
-def best_fit_transform_torch(A, B):
-    '''
-    Calculates the least-squares best-fit transform that maps corresponding points A to B in m spatial dimensions
-    Input:
-      A: bxNxm numpy array of corresponding points
-      B: bxNxm numpy array of corresponding points
-    Returns:
-      T: bx(m+1)x(m+1) homogeneous transformation matrix that maps A on to B
-      R: bxmxm rotation matrix
-      t: bxmx1 translation vector
-    '''
-
-    assert A.shape == B.shape
-
-    # get number of dimensions
-    m = A.shape[-1]
-    b = A.shape[0]
-
-    # translate points to their centroids
-    centroid_A = torch.mean(A, dim=-2, keepdim=True)
-    centroid_B = torch.mean(B, dim=-2, keepdim=True)
-    AA = A - centroid_A
-    BB = B - centroid_B
-
-    # Orthogonal Procrustes Problem
-    # minimize E(R,t) = sum_{i,j} ||bb_i - Raa_j - t||^2
-    # equivalent to minimizing ||BB - R AA||^2
-    # rotation matrix
-    H = AA.transpose(-1, -2) @ BB
-    U, S, Vt = torch.svd(H)
-    # assume H is full rank, then the minimizing R and t are unique
-    R = Vt.transpose(-1, -2) @ U.transpose(-1, -2)
-
-    # special reflection case
-    reflected = torch.det(R) < 0
-    Vt[reflected, m - 1, :] *= -1
-    R[reflected] = Vt[reflected].transpose(-1, -2) @ U[reflected].transpose(-1, -2)
-
-    # translation
-    t = centroid_B.transpose(-1, -2) - (R @ centroid_A.transpose(-1, -2))
-
-    # homogeneous transformation
-    T = torch.eye(m + 1, dtype=A.dtype, device=A.device).repeat(b, 1, 1)
-    T[:, :m, :m] = R
-    T[:, :m, m] = t.view(b, -1)
-
-    return T, R, t
-
-
 def icp_2(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
     '''
     The Iterative Closest Point method: finds best-fit transform that maps points A on to points B
@@ -328,157 +267,6 @@ def icp_2(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
     # calculate final transformation
     T, _, _ = best_fit_transform(A, src[:m, :].T)
 
-    return T, distances, i
-
-
-def init_random_transform_with_given_init(m, batch, dtype, device, given_init_pose=None):
-    # apply some random initial poses
-    if m > 2:
-        R = tf.random_rotations(batch, dtype=dtype, device=device)
-    else:
-        theta = torch.rand(batch, dtype=dtype, device=device) * math.pi * 2
-        Rtop = torch.cat([torch.cos(theta).view(-1, 1), -torch.sin(theta).view(-1, 1)], dim=1)
-        Rbot = torch.cat([torch.sin(theta).view(-1, 1), torch.cos(theta).view(-1, 1)], dim=1)
-        R = torch.cat((Rtop.unsqueeze(-1), Rbot.unsqueeze(-1)), dim=-1)
-
-    init_pose = torch.eye(m + 1, dtype=dtype, device=device).repeat(batch, 1, 1)
-    init_pose[:, :m, :m] = R[:, :m, :m]
-    if given_init_pose is not None:
-        # check if it's given as a batch
-        if len(given_init_pose.shape) == 3:
-            init_pose = given_init_pose.clone()
-        else:
-            init_pose[0] = given_init_pose
-    return init_pose
-
-
-def icp_3(A, B, A_normals=None, B_normals=None, normal_scale=0.1, given_init_pose=None, max_iterations=20,
-          tolerance=1e-4, batch=5, vis=None):
-    '''
-    The Iterative Closest Point method: finds best-fit transform that maps points A on to points B
-    Input:
-        A: Mxm numpy array of source mD points
-        B: Nxm numpy array of destination mD point
-        A_normals: Mxm numpy array of source mD surface normal vectors
-        B_normals: Nxm numpy array of destination mD surface normal vectors
-        given_init_pose: (m+1)x(m+1) homogeneous transformation
-        max_iterations: exit algorithm after max_iterations
-        tolerance: convergence criteria
-    Output:
-        T: final homogeneous transformation that maps A on to B
-        distances: Euclidean distances (errors) of the nearest neighbor
-        i: number of iterations to converge
-    '''
-
-    # get number of dimensions
-    m = A.shape[1]
-
-    # make points homogeneous, copy them to maintain the originals
-    src = torch.ones((m + 1, A.shape[0]), dtype=A.dtype, device=A.device)
-    dst = torch.ones((B.shape[0], m + 1), dtype=A.dtype, device=A.device)
-    src[:m, :] = torch.clone(A.transpose(0, 1))
-    dst[:, :m] = torch.clone(B)
-    src = src.repeat(batch, 1, 1)
-    dst = dst.repeat(batch, 1, 1)
-
-    # apply some random initial poses
-    init_pose = init_random_transform_with_given_init(m, batch, A.dtype, A.device, given_init_pose=given_init_pose)
-
-    # apply the initial pose estimation
-    src = init_pose @ src
-    src_normals = A_normals if normal_scale > 0 else None
-    dst_normals = B_normals if normal_scale > 0 else None
-    if src_normals is not None and dst_normals is not None:
-        # NOTE normally we need to multiply by the transpose of the inverse to transform normals, but since we are sure
-        # the transform does not include scale, we can just use the matrix itself
-        # NOTE normals have to be transformed in the opposite direction as points!
-        src_normals = src_normals.repeat(batch, 1, 1) @ init_pose[:, :m, :m].transpose(-1, -2)
-        dst_normals = dst_normals.repeat(batch, 1, 1)
-
-    prev_error = 0
-    err_list = []
-
-    if vis is not None:
-        for j in range(A.shape[0]):
-            pt = src[0, :m, j]
-            vis.draw_point(f"impt.{j}", pt, color=(0, 1, 0), length=0.003)
-            if src_normals is not None:
-                vis.draw_2d_line(f"imn.{j}", pt, -src_normals[0, j], color=(0, 0.4, 0), size=2., scale=0.03)
-
-    i = 0
-    distances = None
-    for i in range(max_iterations):
-        # find the nearest neighbors between the current source and destination points
-        # if given normals, scale and append them to find nearest neighbours
-        p = src[:, :m, :].transpose(-2, -1)
-        q = dst[:, :, :m]
-        if src_normals is not None:
-            p = torch.cat((p, src_normals * normal_scale), dim=-1)
-            q = torch.cat((q, dst_normals * normal_scale), dim=-1)
-        distances, indices = nearest_neighbor_torch(p, q)
-        # currently only have a single batch so flatten
-        distances = distances.view(batch, -1)
-        indices = indices.view(batch, -1)
-
-        fit_from = src[:, :m, :].transpose(-2, -1)
-        to_fit = []
-        for b in range(batch):
-            to_fit.append(dst[b, indices[b], :m])
-        to_fit = torch.stack(to_fit)
-        # compute the transformation between the current source and nearest destination points
-        T, _, _ = best_fit_transform_torch(fit_from, to_fit)
-
-        # update the current source
-        src = T @ src
-        if src_normals is not None and dst_normals is not None:
-            src_normals = src_normals @ T[:, :m, :m].transpose(-1, -2)
-
-        if vis is not None:
-            for j in range(A.shape[0]):
-                pt = src[0, :m, j]
-                vis.draw_point(f"impt.{j}", pt, color=(0, 1, 0), length=0.003)
-                if src_normals is not None:
-                    vis.draw_2d_line(f"imn.{j}", pt, -src_normals[0, j], color=(0, 0.4, 0), size=2., scale=0.03)
-
-        # check error
-        mean_error = torch.mean(distances)
-        err_list.append(mean_error.item())
-        if torch.abs(prev_error - mean_error) < tolerance:
-            break
-        prev_error = mean_error
-
-    # calculate final transformation
-    T, _, _ = best_fit_transform_torch(A.repeat(batch, 1, 1), src[:, :m, :].transpose(-2, -1))
-
-    if vis is not None:
-        # final evaluation
-        src = torch.ones((m + 1, A.shape[0]), dtype=A.dtype, device=A.device)
-        src[:m, :] = torch.clone(A.transpose(0, 1))
-        src = src.repeat(batch, 1, 1)
-        src = T @ src
-        p = src[:, :m, :].transpose(-2, -1)
-        q = dst[:, :, :m]
-        distances, indices = nearest_neighbor_torch(p, q)
-        # currently only have a single batch so flatten
-        distances = distances.view(batch, -1)
-        mean_error = torch.mean(distances)
-        err_list.append(mean_error.item())
-        if src_normals is not None and dst_normals is not None:
-            # NOTE normally we need to multiply by the transpose of the inverse to transform normals, but since we are sure
-            # the transform does not include scale, we can just use the matrix itself
-            src_normals = A_normals.repeat(batch, 1, 1) @ T[:, :m, :m].transpose(-1, -2)
-
-        for j in range(A.shape[0]):
-            pt = src[0, :m, j]
-            vis.draw_point(f"impt.{j}", pt, color=(0, 1, 0), length=0.003)
-            if src_normals is not None:
-                vis.draw_2d_line(f"imn.{j}", pt, -src_normals[0, j], color=(0, 0.4, 0), size=2., scale=0.03)
-        for dist in err_list:
-            print(dist)
-
-    # convert to RMSE
-    if distances is not None:
-        distances = torch.sqrt(distances.square().sum(dim=1))
     return T, distances, i
 
 
@@ -561,7 +349,7 @@ def icp_volumetric(volumetric_cost, A, given_init_pose=None, batch=30, optimizat
                                                             **kwargs)
     elif optimization == volumetric.Optimization.CMAES:
         op = quality_diversity.CMAES(volumetric_cost, A.repeat(batch, 1, 1), init_transform=given_init_pose,
-                                     **kwargs)
+                                     savedir=cfg.DATA_DIR, **kwargs)
         res = op.run()
     elif optimization in [volumetric.Optimization.CMAME, volumetric.Optimization.CMAMEGA]:
         # feed it the result of SGD optimization
@@ -586,7 +374,7 @@ def icp_volumetric(volumetric_cost, A, given_init_pose=None, batch=30, optimizat
             QD = quality_diversity.CMAMEGA
         op = QD(volumetric_cost, A.repeat(batch, 1, 1), init_transform=given_init_pose,
                 iterations=500, num_emitters=1, bins=bins,
-                ranges=archive_range, **method_specific_kwargs, **kwargs)
+                ranges=archive_range, savedir=cfg.DATA_DIR, **method_specific_kwargs, **kwargs)
 
         if debug:
             # visualize archive
@@ -631,7 +419,7 @@ def icp_medial_constraints(obj_sdf: ObjectFrameSDF, medial_balls, A, given_init_
     medial_constraint_cost = MedialConstraintCost(medial_balls, obj_sdf, A, vis=vis, obj_factory=obj_factory,
                                                   debug=False)
     op = quality_diversity.CMAES(medial_constraint_cost, A.repeat(batch, 1, 1), init_transform=given_init_pose,
-                                 **kwargs)
+                                 savedir=cfg.DATA_DIR, **kwargs)
     res = op.run()
 
     # do extra QD optimization
