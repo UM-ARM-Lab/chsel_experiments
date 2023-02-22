@@ -1,7 +1,6 @@
 from chsel_experiments.env import poke_real_nonros
-from pytorch_volumetric import voxel
+import pytorch_volumetric as pv
 import numpy as np
-import matplotlib.colors
 from matplotlib import pyplot as plt
 from chsel.costs import KnownSDFLookupCost, FreeSpaceLookupCost, OccupiedLookupCost
 import torch
@@ -11,43 +10,18 @@ plt.switch_backend('Qt5Agg')
 task = poke_real_nonros.Levels.DRILL
 env = poke_real_nonros.PokeRealNoRosEnv(task, device="cpu", clean_cache=True)
 
+plt.ion()
+plt.show()
+
 s = env.target_sdf
 query_range = np.copy(s.ranges)
 # middle y slice
 query_range[1] = [0, 0]
-coords, pts = voxel.get_coordinates_and_points_in_grid(s.resolution, query_range, device=s.device)
-# if filter_pts is not None:
-#     pts = filter_pts(pts)
-sdf_val, sdf_grad = s(pts)
-
-# color code them
-norm = matplotlib.colors.Normalize(vmin=sdf_val.min().cpu() - 0.2, vmax=sdf_val.max().cpu())
-color_map = matplotlib.cm.ScalarMappable(norm=norm)
-rgb = color_map.to_rgba(sdf_val.reshape(-1).cpu())
-rgb = rgb[:, :-1]
-
-plt.ion()
-plt.show()
-
-
-def fmt(x):
-    s = f"{x:.1f}"
-    if s.endswith("0"):
-        s = f"{x:.0f}"
-    if x == 0:
-        return "surface"
-    return rf"{s}" if plt.rcParams["text.usetex"] else f"{s}"
-
-
-ax = plt.gca()
-ax.set_xlabel('x')
-ax.set_ylabel('z')
-x = coords[0]
-z = coords[2]
-v = sdf_val.reshape(len(x), len(z)).transpose(0, 1)
-cset1 = ax.contourf(x, z, v, norm=norm, cmap='Greys_r')
-cset2 = ax.contour(x, z, v, colors='k', levels=[0], linestyles='dashed')
-ax.clabel(cset2, cset2.levels, inline=True, fontsize=13, fmt=fmt)
+res = pv.draw_sdf_slice(s.gt_sdf, query_range, resolution=s.resolution, device=s.device, interior_padding=0.2)
+sdf_val = res[0]
+sdf_grad = res[1]
+pts = res[2]
+ax = res[3]
 
 # choose some known free points
 c = 'r'
