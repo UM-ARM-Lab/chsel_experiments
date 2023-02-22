@@ -1089,20 +1089,23 @@ class YCBObjectFactory(pytorch_volumetric.sdf.ObjectFactory):
 def obj_factory_map(obj_name):
     if obj_name == "mustard":
         return YCBObjectFactory("mustard", "YcbMustardBottle",
-                                plausible_suboptimality=0.0003,
+                                plausible_suboptimality=0.0003, scale=2.5,
                                 vis_frame_rot=p.getQuaternionFromEuler([0, 0, 1.57 - 0.1]),
                                 vis_frame_pos=[-0.005, -0.005, 0.015])
     if obj_name == "banana":
         return YCBObjectFactory("banana", "YcbBanana", ranges=np.array([[-.075, .075], [-.075, .075], [-0.1, .15]]),
+                                scale=2.5,
                                 vis_frame_rot=p.getQuaternionFromEuler([0, 0, 0]),
                                 vis_frame_pos=[-.01, 0.0, -.01])
     if obj_name == "drill":
         return YCBObjectFactory("drill", "YcbPowerDrill", ranges=np.array([[-.075, .125], [-.075, .075], [-0.08, .15]]),
+                                scale=2.5,
                                 plausible_suboptimality=0.001,
                                 vis_frame_rot=p.getQuaternionFromEuler([0, 0, -0.6]),
                                 vis_frame_pos=[-0.002, -0.011, -.06])
     if obj_name == "hammer":
         return YCBObjectFactory("hammer", "YcbHammer",
+                                scale=2.5,
                                 plausible_suboptimality=0.001,
                                 vis_frame_rot=p.getQuaternionFromEuler([0, 0, 0]),
                                 vis_frame_pos=[-0.02, 0.01, -0.01])
@@ -1113,6 +1116,7 @@ def obj_factory_map(obj_name):
                                 vis_frame_pos=[-0.03, 0.01, 0.02])
     if obj_name == "can":
         return YCBObjectFactory("can", "YcbPottedMeatCan",
+                                scale=2.5,
                                 plausible_suboptimality=0.0003,
                                 vis_frame_rot=p.getQuaternionFromEuler([0, 0, 0.5]),
                                 vis_frame_pos=[0.006, -0.01, 0.0102])
