@@ -1,5 +1,6 @@
 import math
 
+import chsel.sgd
 import pytorch_kinematics.transforms.rotation_conversions
 
 import numpy as np
@@ -344,18 +345,18 @@ def volumetric_registration(volumetric_cost, A, given_init_pose=None, batch=30, 
                                           torch.ones(batch, device=A.device, dtype=A.dtype))
 
     if optimization == volumetric.Optimization.SGD:
-        res = volumetric.volumetric_registration_sgd(volumetric_cost, batch=batch,
-                                                     init_transform=given_init_pose,
-                                                     **kwargs)
+        res = chsel.sgd.volumetric_registration_sgd(volumetric_cost, batch=batch,
+                                                    init_transform=given_init_pose,
+                                                    **kwargs)
     elif optimization == volumetric.Optimization.CMAES:
         op = quality_diversity.CMAES(volumetric_cost, A.repeat(batch, 1, 1), init_transform=given_init_pose,
                                      savedir=cfg.DATA_DIR, **kwargs)
         res = op.run()
     elif optimization in [volumetric.Optimization.CMAME, volumetric.Optimization.CMAMEGA]:
         # feed it the result of SGD optimization
-        res_init = volumetric.volumetric_registration_sgd(volumetric_cost, batch=batch,
-                                                          init_transform=given_init_pose,
-                                                          **kwargs)
+        res_init = chsel.sgd.volumetric_registration_sgd(volumetric_cost, batch=batch,
+                                                         init_transform=given_init_pose,
+                                                         **kwargs)
 
         # create range based on SGD results (where are good fits)
         # filter outliers out based on RMSE
