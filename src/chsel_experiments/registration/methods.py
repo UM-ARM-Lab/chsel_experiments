@@ -4,6 +4,7 @@ import chsel.sgd
 import pytorch_kinematics.transforms.rotation_conversions
 
 import numpy as np
+from chsel.registration_util import solution_to_world_to_link_matrix, initialize_qd_archive
 from sklearn.neighbors import NearestNeighbors
 import torch
 
@@ -287,16 +288,6 @@ def icp_pytorch3d(A, B, given_init_pose=None, batch=30):
     return T, distances
 
 
-def _our_res_to_world_to_link_matrix(res):
-    batch = res.RTs.T.shape[0]
-    device = res.RTs.T.device
-    dtype = res.RTs.T.dtype
-    T = torch.eye(4, device=device, dtype=dtype).repeat(batch, 1, 1)
-    T[:, :3, :3] = res.RTs.R
-    T[:, :3, 3] = res.RTs.T
-    return T
-
-
 def icp_pytorch3d_sgd(A, B, given_init_pose=None, batch=30, **kwargs):
     # initialize transform with closed form solution
     # T, distances = icp_pytorch3d(A, B, given_init_pose=given_init_pose, batch=batch)
@@ -310,30 +301,12 @@ def icp_pytorch3d_sgd(A, B, given_init_pose=None, batch=30, **kwargs):
 
     res = iterative_closest_point_sgd(A.repeat(batch, 1, 1), B.repeat(batch, 1, 1), init_transform=given_init_pose,
                                       allow_reflection=True, **kwargs)
-    T = _our_res_to_world_to_link_matrix(res)
+    T = solution_to_world_to_link_matrix(res)
     distances = res.rmse
     return T, distances
 
 
 obj_id_map = {}
-
-
-def initialize_qd_archive(T, rmse, range_pos_sigma=3):
-    TT = T[:, :3, 3]
-    filt = rmse < torch.quantile(rmse, 0.8)
-    pos = TT[filt]
-    pos_std = pos.std(dim=-2).cpu().numpy()
-    centroid = pos.mean(dim=-2).cpu().numpy()
-
-    # diff = pos - pos.mean(dim=-2)
-    # s = diff.square().sum()
-    # pos_total_std = (s / len(pos)).sqrt().cpu().numpy()
-
-    # extract translation measure
-    centroid = centroid
-    pos_std = pos_std
-    ranges = np.array((centroid - pos_std * range_pos_sigma, centroid + pos_std * range_pos_sigma)).T
-    return ranges
 
 
 def volumetric_registration(volumetric_cost, A, given_init_pose=None, batch=30, optimization=volumetric.Optimization.SGD,
@@ -360,7 +333,7 @@ def volumetric_registration(volumetric_cost, A, given_init_pose=None, batch=30, 
 
         # create range based on SGD results (where are good fits)
         # filter outliers out based on RMSE
-        T = _our_res_to_world_to_link_matrix(res_init)
+        T = solution_to_world_to_link_matrix(res_init)
         archive_range = initialize_qd_archive(T, res_init.rmse, range_pos_sigma=range_pos_sigma)
         # bins_per_std = 40
         # bins = pos_std / pos_total_std * bins_per_std
@@ -382,7 +355,7 @@ def volumetric_registration(volumetric_cost, A, given_init_pose=None, batch=30, 
             z = 0.1
             aabb = np.concatenate((op.ranges, np.array((z, z)).reshape(1, -1)), axis=0)
             draw_AABB(volumetric_cost.vis, aabb)
-            T = _our_res_to_world_to_link_matrix(res_init)
+            T = solution_to_world_to_link_matrix(res_init)
             draw_pose_distribution(T.inverse(), obj_id_map, volumetric_cost.vis, volumetric_cost.obj_factory,
                                    sequential_delay=None, show_only_latest=False)
 
@@ -393,7 +366,7 @@ def volumetric_registration(volumetric_cost, A, given_init_pose=None, batch=30, 
         if debug:
             print(res_init.rmse)
             print(res.rmse)
-            T = _our_res_to_world_to_link_matrix(res)
+            T = solution_to_world_to_link_matrix(res)
             draw_pose_distribution(T.inverse(), obj_id_map, volumetric_cost.vis, volumetric_cost.obj_factory,
                                    sequential_delay=None, show_only_latest=False)
 
@@ -404,7 +377,7 @@ def volumetric_registration(volumetric_cost, A, given_init_pose=None, batch=30, 
     else:
         raise RuntimeError(f"Unsupported optimization method {optimization}")
 
-    T = _our_res_to_world_to_link_matrix(res)
+    T = solution_to_world_to_link_matrix(res)
     distances = res.rmse
     return T, distances
 
@@ -425,7 +398,7 @@ def icp_medial_constraints(obj_sdf: ObjectFrameSDF, medial_balls, A, given_init_
 
     # do extra QD optimization
     if cmame:
-        T = _our_res_to_world_to_link_matrix(res)
+        T = solution_to_world_to_link_matrix(res)
         archive_range = initialize_qd_archive(T, res.rmse, range_pos_sigma=3)
         bins = 40
         logger.info("QD position bins %s %s", bins, archive_range)
@@ -437,7 +410,7 @@ def icp_medial_constraints(obj_sdf: ObjectFrameSDF, medial_balls, A, given_init_
         op.add_solutions(x)
         res = op.run()
 
-    T = _our_res_to_world_to_link_matrix(res)
+    T = solution_to_world_to_link_matrix(res)
     distances = res.rmse
     return T, distances
 
