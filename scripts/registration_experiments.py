@@ -20,6 +20,7 @@ from chsel_experiments.experiments.registration_nopytorch3d import saved_traj_di
 # marching cubes free surface extraction
 
 from chsel_experiments.registration import registration_method_uses_only_contact_points
+import chsel_experiments.registration.methods
 from chsel.initialization import initialize_transform_estimates
 from pytorch_volumetric import voxel
 from chsel_experiments.poking_controller import PokingController
@@ -514,7 +515,7 @@ class PokeRunner:
         return cache
 
     def run(self, name="", seed=0, ctrl_noise_max=0.005, draw_text=None):
-        quality_diversity.previous_solutions = None
+        registration.methods.previous_solutions = None
         if os.path.exists(self.dbname):
             self.cache = pd.read_pickle(self.dbname)
         else:

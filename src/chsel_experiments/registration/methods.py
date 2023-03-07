@@ -307,10 +307,12 @@ def icp_pytorch3d_sgd(A, B, given_init_pose=None, batch=30, **kwargs):
 
 
 obj_id_map = {}
+previous_solutions = None
 
 
 def volumetric_registration(volumetric_cost, A, given_init_pose=None, batch=30, optimization=volumetric.Optimization.SGD,
                             debug=False, range_pos_sigma=3, **kwargs):
+    global previous_solutions
     given_init_pose = init_random_transform_with_given_init(A.shape[1], batch, A.dtype, A.device,
                                                             given_init_pose=given_init_pose)
     given_init_pose = SimilarityTransform(given_init_pose[:, :3, :3],
@@ -360,9 +362,13 @@ def volumetric_registration(volumetric_cost, A, given_init_pose=None, batch=30, 
                                    sequential_delay=None, show_only_latest=False)
 
         x = op.get_numpy_x(res_init.RTs.R, res_init.RTs.T)
+        # \hat{T}_0
         op.add_solutions(x)
+        # \hat{T}_l
+        op.add_solutions(previous_solutions)
         res = op.run()
 
+        previous_solutions = op.get_all_elite_solutions()
         if debug:
             print(res_init.rmse)
             print(res.rmse)

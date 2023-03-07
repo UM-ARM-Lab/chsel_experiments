@@ -14,13 +14,13 @@ import pytorch_kinematics as tf
 from chsel import registration_util, costs as icp_costs, initialization, quality_diversity
 from base_experiments import cfg, serialization
 from chsel_experiments import registration
+import chsel_experiments.registration.methods
 from pytorch_volumetric import voxel
 from pytorch_volumetric.chamfer import batch_chamfer_dist
 from chsel_experiments.env import poke_real_nonros
 from chsel_experiments.experiments import registration, registration_nopytorch3d
 from pytorch3d.ops.points_alignment import SimilarityTransform
 from base_experiments.util import MakedirsFileHandler
-
 
 from datetime import datetime
 
@@ -165,7 +165,8 @@ class PokeRunner:
             self.r.best_tsf_guess = self.r.link_to_current_tf_gt.get_matrix().repeat(self.B, 1, 1)
 
         # avoid giving methods that don't use freespace more training iterations
-        if registration.registration_method_uses_only_contact_points(self.reg_method) and N in self.r.num_points_to_T_cache:
+        if registration.registration_method_uses_only_contact_points(
+                self.reg_method) and N in self.r.num_points_to_T_cache:
             T, distances = self.r.num_points_to_T_cache[N]
         else:
             if self.read_stored or self.reg_method == registration.ICPMethod.CVO:
@@ -174,7 +175,8 @@ class PokeRunner:
                     self.r.pokes, experiment_name=experiment_name)
                 T = T.to(device=self.env.device, dtype=self.dtype)
                 distances = distances.to(device=self.env.device, dtype=self.dtype)
-            elif self.reg_method in [registration.ICPMethod.MEDIAL_CONSTRAINT, registration.ICPMethod.MEDIAL_CONSTRAINT_CMAME]:
+            elif self.reg_method in [registration.ICPMethod.MEDIAL_CONSTRAINT,
+                                     registration.ICPMethod.MEDIAL_CONSTRAINT_CMAME]:
                 T, distances, self.r.elapsed = registration.do_medial_constraint_registration(self.reg_method,
                                                                                               self.r.contact_pts,
                                                                                               self.volumetric_cost.sdf,
@@ -276,7 +278,7 @@ class PokeRunner:
         return cache
 
     def run(self, name="", seed=0, ctrl_noise_max=0.005, draw_text=None):
-        quality_diversity.previous_solutions = None
+        registration.methods.previous_solutions = None
         if os.path.exists(self.dbname):
             self.cache = pd.read_pickle(self.dbname)
         else:
@@ -800,7 +802,7 @@ class QdExplorationSpeedRunner(EvaluatePlausibleSetRunner):
             ranges = np.array((centroid - pos_std * range_pos_sigma, centroid + pos_std * range_pos_sigma)).T
             bins = 40
             logger.info("QD position std %f bins %s", pos_total_std, bins)
-            quality_diversity.previous_solutions = None
+            registration.methods.previous_solutions = None
             op = QD(self.volumetric_cost, A.repeat(self.B, 1, 1), init_transform=given_init_pose,
                     iterations=500, num_emitters=1, bins=bins, savedir=cfg.DATA_DIR,  # sigma=0.1,
                     ranges=ranges)
