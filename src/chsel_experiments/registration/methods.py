@@ -335,8 +335,8 @@ def initialize_qd_archive(T, rmse, range_pos_sigma=3):
     return ranges
 
 
-def icp_volumetric(volumetric_cost, A, given_init_pose=None, batch=30, optimization=volumetric.Optimization.SGD,
-                   debug=False, range_pos_sigma=3, **kwargs):
+def volumetric_registration(volumetric_cost, A, given_init_pose=None, batch=30, optimization=volumetric.Optimization.SGD,
+                            debug=False, range_pos_sigma=3, **kwargs):
     given_init_pose = init_random_transform_with_given_init(A.shape[1], batch, A.dtype, A.device,
                                                             given_init_pose=given_init_pose)
     given_init_pose = SimilarityTransform(given_init_pose[:, :3, :3],
@@ -344,18 +344,18 @@ def icp_volumetric(volumetric_cost, A, given_init_pose=None, batch=30, optimizat
                                           torch.ones(batch, device=A.device, dtype=A.dtype))
 
     if optimization == volumetric.Optimization.SGD:
-        res = volumetric.iterative_closest_point_volumetric(volumetric_cost, batch=batch,
-                                                            init_transform=given_init_pose,
-                                                            **kwargs)
+        res = volumetric.volumetric_registration_sgd(volumetric_cost, batch=batch,
+                                                     init_transform=given_init_pose,
+                                                     **kwargs)
     elif optimization == volumetric.Optimization.CMAES:
         op = quality_diversity.CMAES(volumetric_cost, A.repeat(batch, 1, 1), init_transform=given_init_pose,
                                      savedir=cfg.DATA_DIR, **kwargs)
         res = op.run()
     elif optimization in [volumetric.Optimization.CMAME, volumetric.Optimization.CMAMEGA]:
         # feed it the result of SGD optimization
-        res_init = volumetric.iterative_closest_point_volumetric(volumetric_cost, batch=batch,
-                                                                 init_transform=given_init_pose,
-                                                                 **kwargs)
+        res_init = volumetric.volumetric_registration_sgd(volumetric_cost, batch=batch,
+                                                          init_transform=given_init_pose,
+                                                          **kwargs)
 
         # create range based on SGD results (where are good fits)
         # filter outliers out based on RMSE

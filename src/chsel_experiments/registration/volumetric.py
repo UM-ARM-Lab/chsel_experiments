@@ -26,7 +26,7 @@ class Optimization(enum.Enum):
     CMAMEGA = 4
 
 
-def iterative_closest_point_volumetric(
+def volumetric_registration_sgd(
         volumetric_cost: VolumetricCost,
         batch=30,
         init_transform: Optional[SimilarityTransform] = None,
