@@ -1,20 +1,19 @@
 import enum
 
 import torch
-import warnings
 from typing import Union, Optional
 
 from pytorch3d.ops import utils as oputil
 from torch import optim
 
-from chsel_experiments.registration.sgd import ICPSolution, SimilarityTransform
+from chsel.types import ICPSolution, SimilarityTransform
 from chsel.costs import VolumetricCost
 from pytorch_kinematics.transforms import random_rotations, matrix_to_rotation_6d, rotation_6d_to_matrix
 
 from chsel_experiments.svgd import RBF, SVGD
 import logging
 
-from chsel.registration_util import plot_poke_losses, plot_sgd_losses, apply_init_transform, apply_similarity_transform
+from chsel.registration_util import plot_poke_losses, plot_sgd_losses, apply_init_transform
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ class Optimization(enum.Enum):
 
 def iterative_closest_point_volumetric(
         volumetric_cost: VolumetricCost,
-        X: Union[torch.Tensor, "Pointclouds"],
+        batch=30,
         init_transform: Optional[SimilarityTransform] = None,
         max_iterations: int = 10,  # quite robust to this parameter (number of restarts)
         relative_rmse_thr: float = 1e-6,
@@ -88,15 +87,37 @@ def iterative_closest_point_volumetric(
         **t_history**: A list of named tuples `SimilarityTransform`
             the transformation parameters after each ICP iteration.
     """
+    dtype = volumetric_cost.dtype
+    device = volumetric_cost.device
+    dim = 3
 
-    # make sure we convert input Pointclouds structures to
-    # padded tensors of shape (N, P, 3)
-    Xt, num_points_X = oputil.convert_pointclouds_to_tensor(X)
-    b, size_X, dim = Xt.shape
-    Xt, R, T, s = apply_init_transform(Xt, init_transform)
-
-    # clone the initial point cloud
-    Xt_init = Xt.clone()
+    if init_transform is not None:
+        b = init_transform.R.shape[0]
+        try:
+            R, T, s = init_transform
+            R = R.clone()
+            T = T.clone()
+            s = s.clone()
+            assert (
+                    R.shape == torch.Size((b, dim, dim))
+                    and T.shape == torch.Size((b, dim))
+                    and s.shape == torch.Size((b,))
+            )
+        except Exception:
+            raise ValueError(
+                "The initial transformation init_transform has to be "
+                "a named tuple SimilarityTransform with elements (R, T, s). "
+                "R are dim x dim orthonormal matrices of shape "
+                "(minibatch, dim, dim), T is a batch of dim-dimensional "
+                "translations of shape (minibatch, dim) and s is a batch "
+                "of scalars of shape (minibatch,)."
+            )
+    else:
+        b = batch
+        # initialize the transformation with identity
+        R = torch.eye(dim, device=device, dtype=dtype).repeat(b, 1, 1)
+        T = torch.zeros((b, dim), device=device, dtype=dtype)
+        s = torch.ones(b, device=device, dtype=dtype)
 
     prev_rmse = None
     rmse = None
@@ -112,7 +133,7 @@ def iterative_closest_point_volumetric(
         # get the alignment of the nearest neighbors from Yt with Xt_init
         sim_transform, rmse = volumetric_points_alignment(
             volumetric_cost,
-            Xt_init,
+            batch=batch,
             estimate_scale=estimate_scale,
             R=R,
             T=T,
@@ -122,9 +143,6 @@ def iterative_closest_point_volumetric(
         )
         R, T, s = sim_transform
         losses.append(rmse)
-
-        # apply the estimated similarity transform to Xt_init
-        Xt = apply_similarity_transform(Xt_init, R, T, s)
 
         # add the current transformation to the history
         t_history.append(SimilarityTransform(R, T, s))
@@ -137,11 +155,11 @@ def iterative_closest_point_volumetric(
 
         if verbose:
             rmse_msg = (
-                    f"ICP iteration {iteration}: mean/max rmse = "
+                    f"registration iteration {iteration}: mean/max rmse = "
                     + f"{rmse.mean():1.2e}/{rmse.max():1.2e} "
                     + f"; mean relative rmse = {relative_rmse.mean():1.2e}"
             )
-            print(rmse_msg)
+            logger.info(rmse_msg)
 
         # check for convergence
         if (relative_rmse <= relative_rmse_thr).all():
@@ -156,14 +174,11 @@ def iterative_closest_point_volumetric(
 
     if verbose:
         if converged:
-            print(f"ICP has converged in {iteration + 1} iterations.")
+            logger.info(f"ICP has converged in {iteration + 1} iterations.")
         else:
-            print(f"ICP has not converged in {max_iterations} iterations.")
+            logger.info(f"ICP has not converged in {max_iterations} iterations.")
 
-    if oputil.is_pointclouds(X):
-        Xt = X.update_padded(Xt)  # type: ignore
-
-    return ICPSolution(converged, rmse, Xt, SimilarityTransform(R, T, s), t_history)
+    return ICPSolution(converged, rmse, torch.empty(0), SimilarityTransform(R, T, s), t_history)
 
 
 class CostProb:
@@ -232,7 +247,7 @@ def iterative_closest_point_volumetric_svgd(
 
 def volumetric_points_alignment(
         volumetric_cost: VolumetricCost,
-        X: Union[torch.Tensor, "Pointclouds"],
+        batch=30,
         estimate_scale: bool = False,
         R: torch.Tensor = None, T: torch.tensor = None, s: torch.tensor = None,
         iterations: int = 50,
@@ -265,20 +280,15 @@ def volumetric_points_alignment(
         - **s**: batch of scaling factors of shape `(minibatch, )`.
     """
 
-    # make sure we convert input Pointclouds structures to tensors
-    Xt, num_points = oputil.convert_pointclouds_to_tensor(X)
-    b, n, dim = Xt.shape
-
-    if (num_points < (dim + 1)).any():
-        warnings.warn(
-            "The size of one of the point clouds is <= dim+1. "
-            + "corresponding_points_alignment cannot return a unique rotation."
-        )
+    device = volumetric_cost.device
+    dtype = volumetric_cost.dtype
+    # works for only 3D transforms
+    dim = 3
 
     if R is None:
-        R = random_rotations(b, dtype=Xt.dtype, device=Xt.device)
-        T = torch.randn((b, dim), dtype=Xt.dtype, device=Xt.device)
-        s = torch.ones(b, dtype=Xt.dtype, device=Xt.device)
+        R = random_rotations(batch, dtype=dtype, device=device)
+        T = torch.randn((batch, dim), dtype=dtype, device=device)
+        s = torch.ones(batch, dtype=dtype, device=device)
 
     # convert to non-redundant representation
     q = matrix_to_rotation_6d(R)

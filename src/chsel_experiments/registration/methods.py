@@ -344,7 +344,7 @@ def icp_volumetric(volumetric_cost, A, given_init_pose=None, batch=30, optimizat
                                           torch.ones(batch, device=A.device, dtype=A.dtype))
 
     if optimization == volumetric.Optimization.SGD:
-        res = volumetric.iterative_closest_point_volumetric(volumetric_cost, A.repeat(batch, 1, 1),
+        res = volumetric.iterative_closest_point_volumetric(volumetric_cost, batch=batch,
                                                             init_transform=given_init_pose,
                                                             **kwargs)
     elif optimization == volumetric.Optimization.CMAES:
@@ -353,7 +353,7 @@ def icp_volumetric(volumetric_cost, A, given_init_pose=None, batch=30, optimizat
         res = op.run()
     elif optimization in [volumetric.Optimization.CMAME, volumetric.Optimization.CMAMEGA]:
         # feed it the result of SGD optimization
-        res_init = volumetric.iterative_closest_point_volumetric(volumetric_cost, A.repeat(batch, 1, 1),
+        res_init = volumetric.iterative_closest_point_volumetric(volumetric_cost, batch=batch,
                                                                  init_transform=given_init_pose,
                                                                  **kwargs)
 
