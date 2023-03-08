@@ -342,7 +342,8 @@ def volumetric_registration(volumetric_cost: chsel.VolumetricCost, A, given_init
         semantics = np.concatenate((known_sdf.cpu().numpy(), np.asarray(free_sem, dtype=object)), axis=0)
 
         reg = chsel.CHSEL(volumetric_cost.sdf, positions, semantics,
-                          free_voxels=volumetric_cost.free_voxels, known_sdf_voxels=volumetric_cost.sdf_voxels,
+                          # comment out below to generate the voxels from the semantic points directly
+                          # free_voxels=volumetric_cost.free_voxels, known_sdf_voxels=volumetric_cost.sdf_voxels,
                           low_cost_transform_set=previous_solutions,
                           qd_alg=QD,
                           qd_alg_kwargs=qd_alg_kwargs,
