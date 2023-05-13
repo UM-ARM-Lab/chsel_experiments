@@ -86,9 +86,12 @@ def do_registration(model_points_world_frame, model_points_register, best_tsf_gu
         elif reg_method == registration.ICPMethod.VOLUMETRIC_SVGD:
             optimization = volumetric.Optimization.SVGD
         # so given_init_pose expects world frame to object frame
-        T, distances = methods.icp_volumetric(volumetric_cost, model_points_world_frame, optimization=optimization,
-                                              given_init_pose=best_tsf_guess.inverse(), save_loss_plot=False,
-                                              batch=B, **kwargs)
+        T, distances = methods.volumetric_registration(volumetric_cost, model_points_world_frame,
+                                                       optimization=optimization,
+                                                       given_init_pose=best_tsf_guess.inverse(),
+                                                       batch=B,
+                                                       qd_alg_kwargs={"save_loss_plot": False},
+                                                       **kwargs)
     else:
         raise RuntimeError(f"Unsupported ICP method {reg_method}")
     # T, distances = registration.icp_mpc(model_points_world_frame, model_points_register,

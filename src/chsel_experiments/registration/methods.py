@@ -1,8 +1,10 @@
 import math
 
+import chsel.sgd
 import pytorch_kinematics.transforms.rotation_conversions
 
 import numpy as np
+from chsel.registration_util import solution_to_world_to_link_matrix, initialize_qd_archive
 from sklearn.neighbors import NearestNeighbors
 import torch
 
@@ -286,16 +288,6 @@ def icp_pytorch3d(A, B, given_init_pose=None, batch=30):
     return T, distances
 
 
-def _our_res_to_world_to_link_matrix(res):
-    batch = res.RTs.T.shape[0]
-    device = res.RTs.T.device
-    dtype = res.RTs.T.dtype
-    T = torch.eye(4, device=device, dtype=dtype).repeat(batch, 1, 1)
-    T[:, :3, :3] = res.RTs.R
-    T[:, :3, 3] = res.RTs.T
-    return T
-
-
 def icp_pytorch3d_sgd(A, B, given_init_pose=None, batch=30, **kwargs):
     # initialize transform with closed form solution
     # T, distances = icp_pytorch3d(A, B, given_init_pose=given_init_pose, batch=batch)
@@ -309,34 +301,20 @@ def icp_pytorch3d_sgd(A, B, given_init_pose=None, batch=30, **kwargs):
 
     res = iterative_closest_point_sgd(A.repeat(batch, 1, 1), B.repeat(batch, 1, 1), init_transform=given_init_pose,
                                       allow_reflection=True, **kwargs)
-    T = _our_res_to_world_to_link_matrix(res)
+    T = solution_to_world_to_link_matrix(res)
     distances = res.rmse
     return T, distances
 
 
 obj_id_map = {}
+previous_solutions = None
 
 
-def initialize_qd_archive(T, rmse, range_pos_sigma=3):
-    TT = T[:, :3, 3]
-    filt = rmse < torch.quantile(rmse, 0.8)
-    pos = TT[filt]
-    pos_std = pos.std(dim=-2).cpu().numpy()
-    centroid = pos.mean(dim=-2).cpu().numpy()
-
-    # diff = pos - pos.mean(dim=-2)
-    # s = diff.square().sum()
-    # pos_total_std = (s / len(pos)).sqrt().cpu().numpy()
-
-    # extract translation measure
-    centroid = centroid
-    pos_std = pos_std
-    ranges = np.array((centroid - pos_std * range_pos_sigma, centroid + pos_std * range_pos_sigma)).T
-    return ranges
-
-
-def icp_volumetric(volumetric_cost, A, given_init_pose=None, batch=30, optimization=volumetric.Optimization.SGD,
-                   debug=False, range_pos_sigma=3, **kwargs):
+def volumetric_registration(volumetric_cost: chsel.VolumetricCost, A, given_init_pose=None, batch=30,
+                            optimization=volumetric.Optimization.SGD,
+                            debug=False, qd_alg_kwargs=None, **kwargs):
+    global previous_solutions
+    orig_given_init_pose = given_init_pose
     given_init_pose = init_random_transform_with_given_init(A.shape[1], batch, A.dtype, A.device,
                                                             given_init_pose=given_init_pose)
     given_init_pose = SimilarityTransform(given_init_pose[:, :3, :3],
@@ -344,55 +322,49 @@ def icp_volumetric(volumetric_cost, A, given_init_pose=None, batch=30, optimizat
                                           torch.ones(batch, device=A.device, dtype=A.dtype))
 
     if optimization == volumetric.Optimization.SGD:
-        res = volumetric.iterative_closest_point_volumetric(volumetric_cost, A.repeat(batch, 1, 1),
-                                                            init_transform=given_init_pose,
-                                                            **kwargs)
+        res = chsel.sgd.volumetric_registration_sgd(volumetric_cost, batch=batch,
+                                                    init_transform=given_init_pose,
+                                                    **kwargs)
     elif optimization == volumetric.Optimization.CMAES:
         op = quality_diversity.CMAES(volumetric_cost, A.repeat(batch, 1, 1), init_transform=given_init_pose,
                                      savedir=cfg.DATA_DIR, **kwargs)
         res = op.run()
     elif optimization in [volumetric.Optimization.CMAME, volumetric.Optimization.CMAMEGA]:
-        # feed it the result of SGD optimization
-        res_init = volumetric.iterative_closest_point_volumetric(volumetric_cost, A.repeat(batch, 1, 1),
-                                                                 init_transform=given_init_pose,
-                                                                 **kwargs)
-
-        # create range based on SGD results (where are good fits)
-        # filter outliers out based on RMSE
-        T = _our_res_to_world_to_link_matrix(res_init)
-        archive_range = initialize_qd_archive(T, res_init.rmse, range_pos_sigma=range_pos_sigma)
-        # bins_per_std = 40
-        # bins = pos_std / pos_total_std * bins_per_std
-        # bins = np.round(bins).astype(int)
-        bins = 40
-        logger.info("QD position bins %s %s", bins, archive_range)
-
-        method_specific_kwargs = {}
         if optimization == volumetric.Optimization.CMAME:
             QD = quality_diversity.CMAME
         else:
             QD = quality_diversity.CMAMEGA
-        op = QD(volumetric_cost, A.repeat(batch, 1, 1), init_transform=given_init_pose,
-                iterations=500, num_emitters=1, bins=bins,
-                ranges=archive_range, savedir=cfg.DATA_DIR, **method_specific_kwargs, **kwargs)
 
+        known_pos, known_sdf = volumetric_cost.sdf_voxels.get_known_pos_and_values()
+        free_pos, _ = volumetric_cost.free_voxels.get_known_pos_and_values()
+        free_sem = [chsel.SemanticsClass.FREE] * free_pos.shape[0]
+        positions = torch.cat((known_pos, free_pos), dim=0)
+        semantics = np.concatenate((known_sdf.cpu().numpy(), np.asarray(free_sem, dtype=object)), axis=0)
+
+        reg = chsel.CHSEL(volumetric_cost.sdf, positions, semantics,
+                          # comment out below to generate the voxels from the semantic points directly
+                          # free_voxels=volumetric_cost.free_voxels, known_sdf_voxels=volumetric_cost.sdf_voxels,
+                          low_cost_transform_set=previous_solutions,
+                          qd_alg=QD,
+                          qd_alg_kwargs=qd_alg_kwargs,
+                          **kwargs)
+
+        def debug_func_after_sgd_init(reg: chsel.CHSEL):
+            if debug:
+                # visualize archive
+                z = 0.1
+                aabb = np.concatenate((reg.qd.ranges, np.array((z, z)).reshape(1, -1)), axis=0)
+                draw_AABB(volumetric_cost.vis, aabb)
+                T = solution_to_world_to_link_matrix(reg.res_init)
+                draw_pose_distribution(T.inverse(), obj_id_map, volumetric_cost.vis, volumetric_cost.obj_factory,
+                                       sequential_delay=None, show_only_latest=False)
+
+        res, previous_solutions = reg.register(initial_tsf=orig_given_init_pose, batch=batch,
+                                               debug_func_after_sgd_init=debug_func_after_sgd_init)
         if debug:
-            # visualize archive
-            z = 0.1
-            aabb = np.concatenate((op.ranges, np.array((z, z)).reshape(1, -1)), axis=0)
-            draw_AABB(volumetric_cost.vis, aabb)
-            T = _our_res_to_world_to_link_matrix(res_init)
-            draw_pose_distribution(T.inverse(), obj_id_map, volumetric_cost.vis, volumetric_cost.obj_factory,
-                                   sequential_delay=None, show_only_latest=False)
-
-        x = op.get_numpy_x(res_init.RTs.R, res_init.RTs.T)
-        op.add_solutions(x)
-        res = op.run()
-
-        if debug:
-            print(res_init.rmse)
+            print(reg.res_init.rmse)
             print(res.rmse)
-            T = _our_res_to_world_to_link_matrix(res)
+            T = solution_to_world_to_link_matrix(res)
             draw_pose_distribution(T.inverse(), obj_id_map, volumetric_cost.vis, volumetric_cost.obj_factory,
                                    sequential_delay=None, show_only_latest=False)
 
@@ -403,7 +375,7 @@ def icp_volumetric(volumetric_cost, A, given_init_pose=None, batch=30, optimizat
     else:
         raise RuntimeError(f"Unsupported optimization method {optimization}")
 
-    T = _our_res_to_world_to_link_matrix(res)
+    T = solution_to_world_to_link_matrix(res)
     distances = res.rmse
     return T, distances
 
@@ -424,8 +396,8 @@ def icp_medial_constraints(obj_sdf: ObjectFrameSDF, medial_balls, A, given_init_
 
     # do extra QD optimization
     if cmame:
-        T = _our_res_to_world_to_link_matrix(res)
-        archive_range = initialize_qd_archive(T, res.rmse, range_pos_sigma=3)
+        T = solution_to_world_to_link_matrix(res)
+        archive_range = initialize_qd_archive(T, res.rmse, range_sigma=3)
         bins = 40
         logger.info("QD position bins %s %s", bins, archive_range)
         op = quality_diversity.CMAME(medial_constraint_cost, A.repeat(batch, 1, 1), init_transform=given_init_pose,
@@ -436,7 +408,7 @@ def icp_medial_constraints(obj_sdf: ObjectFrameSDF, medial_balls, A, given_init_
         op.add_solutions(x)
         res = op.run()
 
-    T = _our_res_to_world_to_link_matrix(res)
+    T = solution_to_world_to_link_matrix(res)
     distances = res.rmse
     return T, distances
 

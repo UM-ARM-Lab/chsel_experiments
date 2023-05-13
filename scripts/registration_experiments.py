@@ -15,11 +15,13 @@ from pytorch_kinematics import transforms as tf
 from sklearn.cluster import Birch, DBSCAN, KMeans
 
 from chsel_experiments.experiments.registration import do_registration, do_medial_constraint_registration
-from chsel_experiments.experiments.registration_nopytorch3d import saved_traj_dir_base, saved_traj_file, read_offline_output, \
+from chsel_experiments.experiments.registration_nopytorch3d import saved_traj_dir_base, saved_traj_file, \
+    read_offline_output, \
     build_model, plot_sdf, plot_poke_chamfer_err, plot_poke_plausible_diversity
 # marching cubes free surface extraction
 
 from chsel_experiments.registration import registration_method_uses_only_contact_points
+import chsel_experiments.registration.methods
 from chsel.initialization import initialize_transform_estimates
 from pytorch_volumetric import voxel
 from chsel_experiments.poking_controller import PokingController
@@ -403,7 +405,8 @@ class PokeRunner:
                     T, distances, self.elapsed = read_offline_output(self.reg_method, self.env.level, seed, self.pokes)
                     T = T.to(device=self.device, dtype=self.dtype)
                     distances = distances.to(device=self.device, dtype=self.dtype)
-                elif self.reg_method in [registration.ICPMethod.MEDIAL_CONSTRAINT, registration.ICPMethod.MEDIAL_CONSTRAINT_CMAME]:
+                elif self.reg_method in [registration.ICPMethod.MEDIAL_CONSTRAINT,
+                                         registration.ICPMethod.MEDIAL_CONSTRAINT_CMAME]:
                     T, distances, self.elapsed = do_medial_constraint_registration(self.reg_method, this_pts,
                                                                                    self.volumetric_cost.sdf,
                                                                                    self.best_tsf_guess, self.B,
@@ -514,7 +517,7 @@ class PokeRunner:
         return cache
 
     def run(self, name="", seed=0, ctrl_noise_max=0.005, draw_text=None):
-        quality_diversity.previous_solutions = None
+        registration.methods.previous_solutions = None
         if os.path.exists(self.dbname):
             self.cache = pd.read_pickle(self.dbname)
         else:
@@ -948,9 +951,13 @@ class EvaluatePlausibleSetRunner(PlausibleSetRunner):
                 for b in range(B):
                     p = best_per_sampled.indices[b]
                     self.env.draw_user_text(f"{best_per_sampled.values[b].item():.0f}", xy=[-0.1, -0.2, -0.5])
-                    self.env.draw_mesh("sampled", pytorch_kinematics.transforms.rotation_conversions.matrix_to_pos_rot(Tinv[b]), (0.0, 1.0, 0., 0.5),
+                    self.env.draw_mesh("sampled",
+                                       pytorch_kinematics.transforms.rotation_conversions.matrix_to_pos_rot(Tinv[b]),
+                                       (0.0, 1.0, 0., 0.5),
                                        object_id=self.env.vis.USE_DEFAULT_ID_FOR_NAME)
-                    self.env.draw_mesh("plausible", pytorch_kinematics.transforms.rotation_conversions.matrix_to_pos_rot(Tp[p]), (0.0, 0.0, 1., 0.5),
+                    self.env.draw_mesh("plausible",
+                                       pytorch_kinematics.transforms.rotation_conversions.matrix_to_pos_rot(Tp[p]),
+                                       (0.0, 0.0, 1., 0.5),
                                        object_id=self.env.vis.USE_DEFAULT_ID_FOR_NAME)
                     time.sleep(self.sleep_between_plots)
 
@@ -958,9 +965,13 @@ class EvaluatePlausibleSetRunner(PlausibleSetRunner):
                 for p in range(P):
                     b = best_per_plausible.indices[p]
                     self.env.draw_user_text(f"{best_per_plausible.values[p].item():.0f}", xy=[-0.1, -0.2, -0.5])
-                    self.env.draw_mesh("sampled", pytorch_kinematics.transforms.rotation_conversions.matrix_to_pos_rot(Tinv[b]), (0.0, 1.0, 0., 0.5),
+                    self.env.draw_mesh("sampled",
+                                       pytorch_kinematics.transforms.rotation_conversions.matrix_to_pos_rot(Tinv[b]),
+                                       (0.0, 1.0, 0., 0.5),
                                        object_id=self.env.vis.USE_DEFAULT_ID_FOR_NAME)
-                    self.env.draw_mesh("plausible", pytorch_kinematics.transforms.rotation_conversions.matrix_to_pos_rot(Tp[p]), (0.0, 0.0, 1., 0.5),
+                    self.env.draw_mesh("plausible",
+                                       pytorch_kinematics.transforms.rotation_conversions.matrix_to_pos_rot(Tp[p]),
+                                       (0.0, 0.0, 1., 0.5),
                                        object_id=self.env.vis.USE_DEFAULT_ID_FOR_NAME)
                     time.sleep(self.sleep_between_plots)
 
