@@ -4,7 +4,12 @@ This is the official experiments code for the paper [CHSEL: Producing Diverse Pl
 If you use it, please cite
 
 ```
-TODO
+@inproceedings{zhong2023chsel,
+  title={CHSEL: Producing Diverse Plausible Pose Estimates from Contact and Free Space Data},
+  author={Zhong, Sheng and Fazeli, Nima and Berenson, Dmitry},
+  booktitle={Robotics science and systems},
+  year={2023}
+}
 ```
 
 ## Installation (experiments)
