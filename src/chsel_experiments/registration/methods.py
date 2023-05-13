@@ -397,7 +397,7 @@ def icp_medial_constraints(obj_sdf: ObjectFrameSDF, medial_balls, A, given_init_
     # do extra QD optimization
     if cmame:
         T = solution_to_world_to_link_matrix(res)
-        archive_range = initialize_qd_archive(T, res.rmse, range_pos_sigma=3)
+        archive_range = initialize_qd_archive(T, res.rmse, range_sigma=3)
         bins = 40
         logger.info("QD position bins %s %s", bins, archive_range)
         op = quality_diversity.CMAME(medial_constraint_cost, A.repeat(batch, 1, 1), init_transform=given_init_pose,
