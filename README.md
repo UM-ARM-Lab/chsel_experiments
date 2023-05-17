@@ -19,6 +19,11 @@ If you use it, please cite
 4. clone repository locally and `cd` into it
 5. `pip install -e .`
 
+## Links
+- [arxiv](https://arxiv.org/abs/2305.08042)
+- [website](https://johnsonzhong.me/projects/chsel/)
+
+
 ## Usage
 This is the full experiments to reproduce the results from the paper.
 See the [light-weight library repository](https://github.com/UM-ARM-Lab/chsel) for how to use CHSEL
