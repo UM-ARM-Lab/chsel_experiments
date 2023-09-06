@@ -62,9 +62,9 @@ class PokeRealNoRosEnv:
         self.freespace_resolution = freespace_voxel_resolution
 
         # known cabinet workspace, can discard queries outside it
-        self.freespace_ranges = np.array([[0.7, 1.1],
-                                          [-0.2, 0.2],
-                                          [0.31, 0.6]])
+        self.freespace_ranges = np.array([[0.9, 1.3],
+                                          [0., 0.6],
+                                          [0.91, 1.2]])
 
         self.free_voxels = None
         self.reset()

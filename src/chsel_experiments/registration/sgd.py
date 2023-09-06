@@ -11,6 +11,7 @@ from pytorch3d.ops.knn import _KNN
 from pytorch3d.transforms import random_rotations, matrix_to_rotation_6d, rotation_6d_to_matrix
 
 from chsel.registration_util import apply_similarity_transform
+import typing
 
 
 def iterative_closest_point_sgd(
@@ -234,7 +235,7 @@ def corresponding_points_alignment_sgd(
         pose_cost=None,
         learn_translation: bool = True,
         use_matching_loss: bool = True
-) -> tuple[SimilarityTransform, torch.tensor]:
+) -> typing.Tuple[SimilarityTransform, torch.tensor]:
     """
     Finds a similarity transformation (rotation `R`, translation `T`
     and optionally scale `s`)  between two given sets of corresponding

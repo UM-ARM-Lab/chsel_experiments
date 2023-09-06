@@ -23,8 +23,7 @@ from sensor_msgs.msg import Image
 from base_experiments import cfg
 from base_experiments.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
 from stucco.detection import ContactDetector
-from stucco_experiments.env.arm_real import BubbleCameraContactSensor, RealArmEnv, pose_msg_to_pos_quaternion, \
-    KukaResidualContactSensor
+from stucco_experiments.env.arm_real import RealArmEnv, pose_msg_to_pos_quaternion, KukaResidualContactSensor
 from chsel_experiments.env.poke_real_nonros import Levels
 
 from victor_hardware_interface_msgs.msg import MotionStatus, ControlMode
@@ -68,14 +67,36 @@ class RealPokeEnv(RealArmEnv):
     CLOSE_ANGLE = 0.0
 
     # REST_JOINTS = [0.142, 0.453, -0.133, -1.985, 0.027, -0.875, 0.041]
-    REST_JOINTS = [0.1141799424293767, 0.45077912971064055, -0.1378142121392566, -1.9944268727534853,
-                   -0.013151296594681122, -0.8713510018630727, 0.06839882517621013]
-    REST_POS = [0.530, 0, 0.433]
-    REST_ORIENTATION = [0, np.pi / 2, 0]
+    # REST_JOINTS = [0.1141799424293767, 0.45077912971064055, -0.1378142121392566, -1.9944268727534853,
+    #                -0.013151296594681122, -0.8713510018630727, 0.06839882517621013]
+    # base aligned - maximum workspace
+    # REST_JOINTS = [0.14082464951729448,
+    #                -0.3989144003142722,
+    #                0.6129646414136141,
+    #                -1.8655067531081384,
+    #                -1.4373121948920622,
+    #                0.7413360632488053,
+    #                0.919484143142184]
+    # world frame rectilinearly aligned
+    REST_JOINTS = [0.08725007079463099,
+                   0.16777117911983663,
+                   0.6021298235129647,
+                   -1.9712373975854824,
+                   -2.658803743043878,
+                   1.384744051381382,
+                   1.7520126079195695]
+    # REST_POS = [0.530, 0, 1.011]
+    # for the palm as the EE
+    REST_POS = [0.75, 0.28, 1.01]
+    # REST_ORIENTATION = [0, -np.pi / 2, 0]
+    # for the palm as the EE
+    REST_ORIENTATION = [0, 0, -np.pi / 2]
+    # REST_ORIENTATION = [0.6230904, -0.3204842, 0.6724652, -0.2384087]
 
-    EE_LINK_NAME = "med_kuka_link_7"
+    # EE_LINK_NAME = "victor_left_arm_link_7"
+    EE_LINK_NAME = "l_palm"
     WORLD_FRAME = "world"
-    ACTIVE_MOVING_ARM = 0  # only 1 arm
+    ACTIVE_MOVING_ARM = 0  # left arm
 
     # --- BubbleBaseEnv overrides
     @classmethod
@@ -163,9 +184,9 @@ class RealPokeEnv(RealArmEnv):
         self.downsample_info = downsample_info
         # listen for imprints (easier than working with the data directly...)
 
-    def enter_cartesian_mode(self):
-        self.robot.set_control_mode(ControlMode.JOINT_IMPEDANCE, vel=self.vel, x_stiffness=1000, y_stiffness=5000,
-                                    z_stiffnes=5000)
+    # def enter_cartesian_mode(self):
+    #     self.robot.set_left_arm_control_mode(ControlMode.JOINT_IMPEDANCE, vel=self.vel)
+    #     # , x_stiffness=1000, y_stiffness=5000, z_stiffnes=5000)
 
     def reset(self):
         # self.return_to_rest(self.robot.arm_group)
@@ -194,21 +215,16 @@ class RealPokeEnv(RealArmEnv):
                                                             WrenchStamped, queue_size=10)
 
         # to reset the rest pose, manually jog it there then read the values
-        rest_pose = pose_msg_to_pos_quaternion(victor.get_link_pose(self.EE_LINK_NAME))
-
-        # TODO reset right arm to rest position
-        self.return_to_rest(self.robot.right_arm_group)
-
-        # reset to rest position
-        self.return_to_rest(self.robot.left_arm_group)
-        self.robot.close_right_gripper()
-
-        base_pose = pose_msg_to_pos_quaternion(victor.get_link_pose('victor_right_arm_mount'))
-        status = victor.get_right_arm_status()
+        # rest_pose = pose_msg_to_pos_quaternion(victor.get_link_pose(self.EE_LINK_NAME))
+        base_pose = pose_msg_to_pos_quaternion(victor.get_link_pose('victor_left_arm_mount'))
+        status = victor.get_left_arm_status()
         canonical_joints = [status.measured_joint_position.joint_1, status.measured_joint_position.joint_2,
                             status.measured_joint_position.joint_3, status.measured_joint_position.joint_4,
                             status.measured_joint_position.joint_5, status.measured_joint_position.joint_6,
                             status.measured_joint_position.joint_7]
+
+        # reset to rest position
+        self.return_to_rest(self.robot.left_arm_group)
 
         self.last_ee_pos = self._observe_ee(return_z=True)
         self.REST_POS[2] = self.last_ee_pos[-1]
@@ -219,7 +235,7 @@ class RealPokeEnv(RealArmEnv):
         # parallel visualizer for ROS and pybullet
         self._contact_detector = ContactDetector(residual_precision, window_size=50)
         self._contact_detector.register_contact_sensor(KukaResidualContactSensor("victor", residual_threshold,
-                                                                                 base_pose=base_pose,
+                                                                                 # base_pose=base_pose,
                                                                                  default_joint_config=canonical_joints,
                                                                                  canonical_pos=self.REST_POS,
                                                                                  canonical_orientation=self.REST_ORIENTATION,
@@ -239,9 +255,13 @@ class RealPokeEnv(RealArmEnv):
         dz = action[2] * self.MAX_PUSH_DIST
         return dx, dy, dz
 
+    def step(self, action, dz=0., orientation=None):
+        info = self._do_action(action)
+        cost, done = self.evaluate_cost(self.state, action)
+        return np.copy(self.state), -cost, done, info
+
     def _do_action(self, action):
         self._clear_state_before_step()
-        action = action['dxyz']
         success = True
         if action is not None:
             action = np.clip(action, *self.get_control_bounds())
@@ -250,18 +270,17 @@ class RealPokeEnv(RealArmEnv):
             dx, dy, dz = self._unpack_action(action)
 
             self._single_step_contact_info = {}
-            orientation = self.orientation
-            if orientation is None:
-                orientation = copy.deepcopy(self.REST_ORIENTATION)
-                if self._need_to_force_planar:
-                    orientation[1] += np.pi / 4
+            # orientation = self.orientation
+            # if orientation is None:
+            #     orientation = copy.deepcopy(self.REST_ORIENTATION)
 
             self.robot.move_delta_cartesian_impedance(self.ACTIVE_MOVING_ARM, dx=dx, dy=dy,
                                                       target_z=self.last_ee_pos[2] + dz,
                                                       stop_on_force_threshold=7.,
                                                       # stop_callback=self._stop_push,
                                                       blocking=True, step_size=0.025,
-                                                      target_orientation=orientation)
+                                                      # target_orientation=orientation
+                                                      )
             s = self.robot.cartesian.status
             if s.reached_joint_limit or s.reached_force_threshold or s.callback_stopped:
                 success = False

@@ -1,6 +1,8 @@
 #! /usr/bin/env python
 import argparse
 import numpy as np
+
+np.float = np.float64
 import logging
 
 from chsel import initialization
@@ -13,6 +15,7 @@ import os
 from datetime import datetime
 
 from base_experiments import cfg
+from base_experiments.env.env import draw_AABB
 from chsel_experiments.env import poke_real
 from chsel_experiments.env import poke_real_nonros
 from stucco import tracking
@@ -20,7 +23,10 @@ from stucco.tracking import ContactSet
 from victor_hardware_interface_msgs.msg import ControlMode
 from base_experiments.util import MakedirsFileHandler
 
+import pytorch_seed as rand
+
 import pytorch_volumetric as pv
+from pytorch_kinematics import transforms as tf
 import torch
 import chsel
 
@@ -66,7 +72,7 @@ class StubContactSet(ContactSet):
 def predetermined_poke_range():
     # y,z order of poking
     return {
-        poke_real_nonros.Levels.DRILL: ((0.05, -0.08), (0.0, 0.05, 0.12)),
+        poke_real_nonros.Levels.DRILL: ((0.0, 0.05, -0.08), (0.0, 0.05, 0.12)),
         poke_real_nonros.Levels.DRILL_OPPOSITE: ((0.07, -0.11), (-0.03, 0.05, 0.13)),
         poke_real_nonros.Levels.MUSTARD: ((0.0, 0.05), (-0.02, 0.04, 0.13)),
         poke_real_nonros.Levels.MUSTARD_SIDEWAYS: ((0.05, 0.12), (-0.02, 0.04, 0.13)),
@@ -123,14 +129,15 @@ class PokingControllerWrapper:
     def head_to_next_poke_yz(self):
         target_pos = [self.ctrl.x_rest] + list(self.ctrl.target_yz[0])
         self.env.robot.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=self.env.vel)
-        self.env.robot.plan_to_pose(self.env.robot.arm_group, self.env.EE_LINK_NAME,
+        self.env.robot.plan_to_pose(self.env.robot.left_arm_group, self.env.EE_LINK_NAME,
                                     target_pos + self.env.REST_ORIENTATION)
         self.env.enter_cartesian_mode()
         self.ctrl.push_i = 0
 
     def control(self, obs, info=None):
         with self.env.motion_status_input_lock:
-            obs = obs['xyz']
+            if isinstance(obs, dict):
+                obs = obs['xyz']
 
         u = [0 for _ in range(self.ctrl.nu)]
         if info is None:
@@ -157,13 +164,18 @@ class PokingControllerWrapper:
                 # directly go to next target rather than return backward
                 assert isinstance(self.env, RealPokeEnv)
 
+                logger.info("Finished probe, moving back")
                 # move back so planning is allowed (don't start in collision)
-                target_pos = [self.ctrl.x_rest, self.ctrl.target_yz[0][0], obs[2]]
-                self.env.robot.cartesian_impedance_raw_motion(target_pos, frame_id=self.env.EE_LINK_NAME,
-                                                              ref_frame=self.env.WORLD_FRAME, blocking=True,
-                                                              goal_tolerance=np.array([0.001, 0.001, 0.01]))
+                u[0] = -0.7
+                # max 5 steps
+                for j in range(5):
+                    if obs[0] > self.ctrl.x_rest:
+                        break
+                    obs, _, _, _ = self.env.step(u)
+
                 self.ctrl.target_yz = self.ctrl.target_yz[1:]
                 if not self.ctrl.done():
+                    logger.info("Finished moving back, moving to start of next yz")
                     self.head_to_next_poke_yz()
                 return {'dxyz': None}
 
@@ -175,7 +187,25 @@ class PokingControllerWrapper:
         return {'dxyz': u}
 
 
+def randomly_downsample(seq, seed, num=10):
+    with rand.SavedRNG():
+        rand.seed(seed)
+        selected = np.random.permutation(range(len(seq)))
+        seq = seq[selected[:num]]
+    return seq
+
+
+def plot_estimate_set(env: poke_real_nonros.PokeRealNoRosEnv, vis, estimate_set, ns="estimate_set", downsample=10):
+    # estimate_set = estimate_set.inverse()
+    vis.clear_visualization_after(ns, 0)
+    estimate_set = randomly_downsample(estimate_set, 64, num=downsample)
+    for i, T in enumerate(estimate_set):
+        pose = tf.rotation_conversions.matrix_to_pos_rot(T)
+        env.obj_factory.draw_mesh(vis, ns, pose, (0., .0, 0.8, 0.1), object_id=i)
+
+
 def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealNoRosEnv, seed=0, control_wait=0.):
+    rand.seed(seed)
     batch = 30
     registration_iterations = 5
 
@@ -188,42 +218,57 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                                    x_rest=env.REST_POS[0], push_forward_count=5)
     num_probes = len(y_order) * len(z_order)
 
-    obs, info = env.reset()
     env.recalibrate_static_wrench()
+    obs, info = env.reset()
 
     known_sdf_voxels = pv.VoxelSet(torch.empty(0), torch.empty(0))
 
     previous_solutions = None
+    # visualize workspace
+    draw_AABB(env.vis, env_process.freespace_ranges)
+
     # TODO initialize transforms - maybe do so only at first contact since that's when we can narrow down its translation
     world_to_link = initialization.initialize_transform_estimates(batch, env_process.freespace_ranges,
                                                                   chsel.initialization.InitMethod.RANDOM,
                                                                   None,
                                                                   device=env_process.device,
                                                                   dtype=env_process.dtype)
+    # plot these transforms
+    plot_estimate_set(env_process, env.vis, world_to_link)
 
     while not ctrl.ctrl.done():
         action = ctrl.control(obs, info)
         action = action['dxyz']
+        # finished a probe, do registration
         if action is None:
-            break
-        observation, reward, done, info = env.step(action)
-        # TODO process info (query contact detector, and feed transformed known robot points as free points)
-        # TODO do registration
-        known_pos, known_sdf = known_sdf_voxels.get_known_pos_and_values()
-        free_pos, _ = env_process.free_voxels.get_known_pos_and_values()
-        free_sem = [chsel.SemanticsClass.FREE] * free_pos.shape[0]
-        positions = torch.cat((known_pos, free_pos), dim=0)
-        semantics = np.concatenate((known_sdf.cpu().numpy(), np.asarray(free_sem, dtype=object)), axis=0)
-        registration = chsel.CHSEL(env_process.target_sdf, positions, semantics,
-                                   free_voxels=env_process.free_voxels,
-                                   known_sdf_voxels=known_sdf_voxels,
-                                   qd_iterations=100, free_voxels_resolution=0.005)
-        res, previous_solutions = registration.register(initial_tsf=world_to_link, batch=batch,
-                                                        iterations=registration_iterations,
-                                                        low_cost_transform_set=previous_solutions, )
-        world_to_link = chsel.solution_to_world_to_link_matrix(res)
+            logger.info("Finished a probe, potentially doing registration now")
+            # TODO process info (query contact detector, and feed transformed known robot points as free points)
+            # TODO do registration
+            known_pos, known_sdf = known_sdf_voxels.get_known_pos_and_values()
+            # skip if we haven't made any contact yet
+            if len(known_pos) > 1:
+                free_pos, _ = env_process.free_voxels.get_known_pos_and_values()
+                free_sem = [chsel.SemanticsClass.FREE] * free_pos.shape[0]
+                positions = torch.cat((known_pos, free_pos), dim=0)
+                semantics = np.concatenate((known_sdf.cpu().numpy(), np.asarray(free_sem, dtype=object)), axis=0)
+                registration = chsel.CHSEL(env_process.target_sdf, positions, semantics,
+                                           free_voxels=env_process.free_voxels,
+                                           known_sdf_voxels=known_sdf_voxels,
+                                           qd_iterations=100, free_voxels_resolution=0.005)
+                res, previous_solutions = registration.register(initial_tsf=world_to_link, batch=batch,
+                                                                iterations=registration_iterations,
+                                                                low_cost_transform_set=previous_solutions, )
+                world_to_link = chsel.solution_to_world_to_link_matrix(res)
 
-        # TODO broadcast registration
+                # plot latest registration
+                plot_estimate_set(env_process, env.vis, world_to_link)
+        else:
+            observation, reward, done, info = env.step(action)
+            # TODO observe contact point from detector and add it to known_sdf_voxels
+            pt, _ = env.contact_detector.get_last_contact_location(visualizer=env.vis)
+            if pt is not None:
+                known_sdf_voxels[pt] = 0
+            # TODO observe pose and add points transformed by it to free_voxels
 
 
 def main(args):
