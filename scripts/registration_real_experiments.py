@@ -74,7 +74,7 @@ class StubContactSet(ContactSet):
 def predetermined_poke_range():
     # y,z order of poking
     return {
-        poke_real_nonros.Levels.DRILL: ((0.0, 0.06, -0.06), (0.0, 0.05, 0.08)),
+        poke_real_nonros.Levels.DRILL: ((0.0, 0.05, -0.06), (0.0, 0.05, 0.08)),
         poke_real_nonros.Levels.DRILL_OPPOSITE: ((0.07, -0.11), (-0.03, 0.05, 0.13)),
         poke_real_nonros.Levels.MUSTARD: ((0.0, 0.05), (-0.02, 0.04, 0.13)),
         poke_real_nonros.Levels.MUSTARD_SIDEWAYS: ((0.05, 0.12), (-0.02, 0.04, 0.13)),
@@ -175,7 +175,7 @@ class PokingControllerWrapper:
                 # directly go to next target rather than return backward
                 assert isinstance(self.env, RealPokeEnv)
 
-                logger.info("Finished probe, moving back")
+                logger.info(f"Finished probe at x={obs[0]} , moving back")
                 # move back so planning is allowed (don't start in collision)
                 u[0] = -0.7
                 # max 5 steps

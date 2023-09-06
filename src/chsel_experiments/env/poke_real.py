@@ -78,16 +78,32 @@ class RealPokeEnv(RealArmEnv):
     #                0.7413360632488053,
     #                0.919484143142184]
     # world frame rectilinearly aligned
-    REST_JOINTS = [0.08725007079463099,
-                   0.16777117911983663,
-                   0.6021298235129647,
-                   -1.9712373975854824,
-                   -2.658803743043878,
-                   1.384744051381382,
-                   1.7520126079195695]
+    # REST_JOINTS = [0.2828029603611603,
+    #                -0.03556846047071725,
+    #                0.46793766349977467,
+    #                -1.9773933343184746,
+    #                -2.6146387104445354,
+    #                1.3326174068600685,
+    #                1.6537109844559428]
+    REST_JOINTS = [1.6062333802263173,
+                   1.5544142508291496,
+                   -2.337494964736803,
+                   -1.9804216281600897,
+                   0.046002837423621684,
+                   -0.40735081533659745,
+                   0.6873008110878134]
+    # backup for elbow down configuration (not actually at rest POS, but close to it)
+    # REST_JOINTS = [0.7451858757153524,
+    #                1.6693149845690027,
+    #                0.41778811650139713,
+    #                1.6096283913057212,
+    #                -0.28469437066085357,
+    #                0.5413406216581451,
+    #                -1.3222414050401743]
+
     # REST_POS = [0.530, 0, 1.011]
     # for the palm as the EE
-    REST_POS = [0.77, 0.37, 1.0]
+    REST_POS = [0.77, 0.38, 1.0]
     # REST_ORIENTATION = [0, -np.pi / 2, 0]
     # for the palm as the EE
     REST_ORIENTATION = [0, 0, -np.pi / 2]
@@ -217,14 +233,14 @@ class RealPokeEnv(RealArmEnv):
         # to reset the rest pose, manually jog it there then read the values
         # rest_pose = pose_msg_to_pos_quaternion(victor.get_link_pose(self.EE_LINK_NAME))
         base_pose = pose_msg_to_pos_quaternion(victor.get_link_pose('victor_left_arm_mount'))
+
+        # reset to rest position
+        self.return_to_rest(self.robot.left_arm_group)
         status = victor.get_left_arm_status()
         canonical_joints = [status.measured_joint_position.joint_1, status.measured_joint_position.joint_2,
                             status.measured_joint_position.joint_3, status.measured_joint_position.joint_4,
                             status.measured_joint_position.joint_5, status.measured_joint_position.joint_6,
                             status.measured_joint_position.joint_7]
-
-        # reset to rest position
-        self.return_to_rest(self.robot.left_arm_group)
 
         self.last_ee_pos = self._observe_ee(return_z=True)
         self.REST_POS[2] = self.last_ee_pos[-1]

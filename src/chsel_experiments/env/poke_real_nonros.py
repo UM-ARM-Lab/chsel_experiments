@@ -63,7 +63,7 @@ class PokeRealNoRosEnv:
 
         # known cabinet workspace, can discard queries outside it
         self.freespace_ranges = np.array([[0.9, 1.3],
-                                          [0., 0.6],
+                                          [0.2, 0.8],
                                           [0.91, 1.2]])
 
         self.free_voxels = None
