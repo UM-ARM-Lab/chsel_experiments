@@ -16,12 +16,17 @@ class PokingController(Controller):
 
     def __init__(self, contact_detector: detection.ContactDetector, contact_set: tracking.ContactSet,
                  y_order=(0, 0.2, 0.3, -0.2, -0.3), z_order=(0.05, 0.15, 0.25, 0.325, 0.4, 0.5), x_rest=-0.05,
+                 force_targets=None,
+                 # force_targets=((0.37, 1.0), (0.43, 1.0), (0.4, 1.0)),
                  Kp=30,
                  push_forward_count=10, nu=3, dim=3, goal_tolerance=3e-4):
         super().__init__()
 
         self.x_rest = x_rest
-        self._all_targets = list(itertools.product(y_order, z_order))
+        if force_targets is None:
+            self._all_targets = list(itertools.product(y_order, z_order))
+        else:
+            self._all_targets = force_targets
         self.target_yz = self._all_targets
         self.push_forward_count = push_forward_count
         self.mode = self.Mode.GO_TO_NEXT_TARGET

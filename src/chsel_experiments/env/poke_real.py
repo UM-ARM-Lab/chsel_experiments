@@ -87,7 +87,7 @@ class RealPokeEnv(RealArmEnv):
                    1.7520126079195695]
     # REST_POS = [0.530, 0, 1.011]
     # for the palm as the EE
-    REST_POS = [0.75, 0.28, 1.01]
+    REST_POS = [0.77, 0.37, 1.0]
     # REST_ORIENTATION = [0, -np.pi / 2, 0]
     # for the palm as the EE
     REST_ORIENTATION = [0, 0, -np.pi / 2]
@@ -172,7 +172,7 @@ class RealPokeEnv(RealArmEnv):
     def control_cost(cls):
         return np.diag([1 for _ in range(cls.nu)])
 
-    def __init__(self, *args, seed=0, environment_level=0, vel=0.2, downsample_info=50, use_cameras=True, **kwargs):
+    def __init__(self, *args, seed=0, environment_level=0, vel=0.4, downsample_info=50, use_cameras=True, **kwargs):
         self.seed = seed
         level = Levels(environment_level)
         save_path = os.path.join(cfg.DATA_DIR, DIR, level.name)
@@ -194,7 +194,7 @@ class RealPokeEnv(RealArmEnv):
         self.contact_detector.clear()
         return np.copy(self.state), None
 
-    def _setup_robot_ros(self, residual_threshold=10., residual_precision=None):
+    def _setup_robot_ros(self, residual_threshold=15., residual_precision=None):
         victor = Victor(force_trigger=5.0)
         self.robot = victor
         # adjust timeout according to velocity (at vel = 0.1 we expect 400s per 1m)
@@ -276,7 +276,7 @@ class RealPokeEnv(RealArmEnv):
 
             self.robot.move_delta_cartesian_impedance(self.ACTIVE_MOVING_ARM, dx=dx, dy=dy,
                                                       target_z=self.last_ee_pos[2] + dz,
-                                                      stop_on_force_threshold=7.,
+                                                      stop_on_force_threshold=10.,
                                                       # stop_callback=self._stop_push,
                                                       blocking=True, step_size=0.025,
                                                       # target_orientation=orientation
