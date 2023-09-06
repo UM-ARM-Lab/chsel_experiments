@@ -5,9 +5,9 @@ import argparse
 
 import pybullet as p
 import pytorch_kinematics as tf
-from mmint_camera_utils.camera_utils.camera_utils import project_depth_image
-from mmint_camera_utils.ros_utils.utils import pose_to_matrix
-from mmint_camera_utils.camera_utils.point_cloud_utils import tr_pointcloud
+# from mmint_camera_utils.camera_utils.camera_utils import project_depth_image
+# from mmint_camera_utils.ros_utils.utils import pose_to_matrix
+# from mmint_camera_utils.camera_utils.point_cloud_utils import tr_pointcloud
 from arm_pytorch_utilities import rand
 from window_recorder.recorder import WindowRecorder
 
@@ -62,109 +62,6 @@ def cartesian_product(*arrays):
         arr[..., i] = a
     return arr.reshape(-1, la)
 
-
-def free_points_from_gripper(bubbles, sample):
-    # complete the gripper from the points since there are gaps in between
-    zs = bubbles['left']['pts_world_filtered'][..., 2]
-    z = np.linspace(zs.min(), zs.max(), num=30)
-    xs = bubbles['left']['pts_world_filtered'][..., 0]
-    x = np.linspace(xs.max() - 0.01, xs.max() - 0.005, num=10)
-    y = np.linspace(bubbles['left']['pts_world_filtered'][..., 1].min(),
-                    bubbles['right']['pts_world_filtered'][..., 1].max(), num=30)
-    filling_pts = cartesian_product(x, y, z)
-    pts_free = np.concatenate((bubbles['left']['pts_world_filtered'].reshape(-1, 3),
-                               bubbles['right']['pts_world_filtered'].reshape(-1, 3), filling_pts))
-
-    # vis.draw_points(f"known.2", filling_pts.reshape(-1, 3), color=(0, 0.8, 1), scale=0.1)
-    extend_along = -sample['wrist_z']
-    pts_to_set = []
-    for delta in np.linspace(0.02, 0.15, num=10):
-        pts_to_set.append(pts_free + extend_along * delta)
-    pts_to_set = np.concatenate(pts_to_set)
-    return pts_free, pts_to_set
-
-
-def contact_points_from_gripper(bubbles, sample, imprint_threshold=0.004):
-    contact_pts = []
-    for camera in ['left', 'right']:
-        data = bubbles[camera]
-        pts = data['pts_world_filtered']
-
-        imprint = data['imprint_final']
-        imprint = imprint[..., 0]
-        # first smooth the imprint
-        imprint_filtered = scipy.ndimage.uniform_filter(imprint, size=10, output=None, mode='reflect',
-                                                        cval=0.0, origin=0)
-        logger.info(f"{camera} max filtered imprint {imprint_filtered.max()}")
-        # get top percentile
-        above_quantile = np.quantile(imprint_filtered, 0.9)
-        mask = (imprint_filtered > above_quantile) & (imprint_filtered > imprint_threshold)
-        contact = pts[mask]
-
-        # find local minima using the gradient
-        # img_grad = np.gradient(imprint_filtered)
-        # g = np.stack(img_grad, axis=-1)
-        # gmag = np.linalg.norm(g, axis=-1)
-        # u, v = np.where(gmag < np.quantile(gmag, 0.01))
-        # test_imprints = imprint_filtered[u, v]
-        # mask = test_imprints > imprint_threshold
-        # contact = pts[u[mask], v[mask]]
-
-        # num_test_points = 200
-        # test_u = np.random.randint(0, imprint_filtered.shape[0], num_test_points)
-        # test_v = np.random.randint(0, imprint_filtered.shape[1], num_test_points)
-        # test_uv = np.stack((test_u, test_v))
-        # for i in range(100):
-        #     this_grad = img_grad[test_uv]
-        #     test_uv += this_grad
-        #
-        # test_uv = np.unique(test_uv)
-
-        # doesn't work because filter will always find some local min inside its window
-        # then extract local min
-        # imprint_local_min = scipy.ndimage.minimum_filter(-imprint_filtered, size=7, footprint=None, output=None,
-        #                                                  mode='constant', cval=0.0, origin=0)
-        # imprint_local_max = -imprint_local_min
-        # mask = (imprint_local_max == imprint_filtered) & (imprint_filtered > imprint_threshold)
-        # contact = pts[mask]
-
-        # cluster contact into voxels
-        pts_threshold = 50
-        if len(contact) > pts_threshold:
-            # random subsample
-            contact = np.random.permutation(contact)[:pts_threshold]
-
-            # cluster via voxelization
-            # ranges = np.stack((contact.min(axis=0), contact.max(axis=0)))
-            # contact_voxel = voxel.VoxelGrid(0.003, ranges.T)
-            # contact_voxel[torch.tensor(contact)] = 1
-            # contact, _ = contact_voxel.get_known_pos_and_values()
-            # contact = contact.cpu().numpy()
-
-            # k-means cluster
-            # from sklearn.cluster import KMeans
-            # kmeans = KMeans(n_clusters=8, n_init='auto').fit(contact)
-            # contact = kmeans.cluster_centers_
-
-        contact_pts.append(contact)
-
-    return contact_pts
-
-
-def free_points_from_camera(depth, K):
-    # project depth image that's been "diluted" to be brought closer to the camera into points
-    if len(depth.shape) > 2:
-        depth = depth[..., 0]
-    # for backward compatibility, in case it's given in mm
-    if np.any(depth > 1000):
-        depth = depth.astype(np.float32) / 1000
-    pts_to_set = []
-    for level in np.linspace(0.95, 0.4, 20):
-        d = depth * level
-        pts = project_depth_image(d, K, usvs=None)
-        pts_to_set.append(pts.reshape(-1, 3))
-    pts_to_set = np.concatenate(pts_to_set)
-    return pts_to_set
 
 
 def export_pc_to_register(point_cloud_file: str, pokes_to_data):
@@ -282,12 +179,12 @@ def extract_known_points(task, to_process_seed, vis: typing.Optional[DebugRvizDr
         env.free_voxels[torch.from_numpy(pts_to_set)] = 1
 
         scene = dataset.get_scene_info(i, 1)
-        camera_free_pts_cf = free_points_from_camera(scene['depth'], scene['K'])
-        # transform points from camera frame to world frame
-        w_X_cf = pose_to_matrix(scene['camera_tf'])
-        camera_free_pts = tr_pointcloud(camera_free_pts_cf, w_X_cf[:3, :3], w_X_cf[:3, 3])  # in world frame
+        # camera_free_pts_cf = free_points_from_camera(scene['depth'], scene['K'])
+        # # transform points from camera frame to world frame
+        # w_X_cf = pose_to_matrix(scene['camera_tf'])
+        # camera_free_pts = tr_pointcloud(camera_free_pts_cf, w_X_cf[:3, :3], w_X_cf[:3, 3])  # in world frame
 
-        env.free_voxels[torch.from_numpy(camera_free_pts)] = 1
+        # env.free_voxels[torch.from_numpy(camera_free_pts)] = 1
 
         contact = contact_points_from_gripper(bubbles, sample)
         contact_pts += contact
@@ -315,10 +212,10 @@ def extract_known_points(task, to_process_seed, vis: typing.Optional[DebugRvizDr
             # vis.draw_points(f"camera_free.0", camera_free_pts, color=(1, 0.5, 1), scale=0.2)
             vis.draw_points(f"contact.0", c_pts, color=(1, 0, 0), scale=0.5)
             # for the teaser image, isolate the contribution from the camera
-            free_voxels = voxel.VoxelGrid(env.freespace_resolution, env.freespace_ranges)
-            free_voxels[torch.from_numpy(camera_free_pts)] = 1
-            cf_pts, _ = free_voxels.get_known_pos_and_values()
-            vis.draw_points(f"camera_free.0", cf_pts, color=(1, 0.5, 1), scale=0.2)
+            # free_voxels = voxel.VoxelGrid(env.freespace_resolution, env.freespace_ranges)
+            # free_voxels[torch.from_numpy(camera_free_pts)] = 1
+            # cf_pts, _ = free_voxels.get_known_pos_and_values()
+            # vis.draw_points(f"camera_free.0", cf_pts, color=(1, 0.5, 1), scale=0.2)
 
     # last poke of the last sample
     end_current_poke(None)

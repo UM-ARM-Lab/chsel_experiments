@@ -3,10 +3,9 @@ import argparse
 import numpy as np
 import logging
 
-from bubble_utils.bubble_data_collection.controller_base import ControllerBase
+from chsel import initialization
 from chsel_experiments.env.poke_real import RealPokeEnv
 from chsel_experiments.poking_controller import PokingController
-from bubble_utils.bubble_data_collection.env_data_collection import ReferencedEnvDataCollector
 
 # from stucco.env.real_env import VideoLogger
 from base_experiments.env_getters.getter import EnvGetter
@@ -21,6 +20,9 @@ from stucco.tracking import ContactSet
 from victor_hardware_interface_msgs.msg import ControlMode
 from base_experiments.util import MakedirsFileHandler
 
+import pytorch_volumetric as pv
+import torch
+import chsel
 
 try:
     import rospy
@@ -105,12 +107,12 @@ class RealPokeGetter(EnvGetter):
         return params
 
 
-class PokingControllerWrapper(ControllerBase):
+class PokingControllerWrapper:
     def get_controller_params(self):
         return {'kp': self.ctrl.kp, 'x_rest': self.ctrl.x_rest}
 
     def __init__(self, env, *args, force_threshold=10, **kwargs):
-        super().__init__(env)
+        self.env = env
         self.force_threshold = force_threshold
         self.ctrl = PokingController(*args, **kwargs)
 
@@ -173,9 +175,9 @@ class PokingControllerWrapper(ControllerBase):
         return {'dxyz': u}
 
 
-def run_poke(env: poke_real.RealPokeEnv, seed=0, control_wait=0.):
-    # def hook_after_poke():
-    #     logger.info(f"Finished poke {pokes} for seed {seed} of level {env.level}")
+def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealNoRosEnv, seed=0, control_wait=0.):
+    batch = 30
+    registration_iterations = 5
 
     # input("enter to start execution")
     y_order, z_order = predetermined_poke_range()[env.level]
@@ -184,17 +186,44 @@ def run_poke(env: poke_real.RealPokeEnv, seed=0, control_wait=0.):
     z_order = list(z + env.REST_POS[2] for z in z_order)
     ctrl = PokingControllerWrapper(env, env.contact_detector, StubContactSet(), y_order=y_order, z_order=z_order,
                                    x_rest=env.REST_POS[0], push_forward_count=5)
+    num_probes = len(y_order) * len(z_order)
 
+    obs, info = env.reset()
     env.recalibrate_static_wrench()
-    data_path = os.path.join(cfg.DATA_DIR, poke_real.DIR)
-    dc = ReferencedEnvDataCollector(env, data_path, scene_name=env.level.name, reset_trajectories=True,
-                                    trajectory_length=100,
-                                    controller=ctrl,
-                                    reuse_prev_observation=True)
 
-    # with VideoLogger(window_names=("cartpole.rviz* - RViz", "cartpole.rviz - RViz"),
-    #                  log_external_video=True):
-    dc.collect_data(len(y_order) * len(z_order))
+    known_sdf_voxels = pv.VoxelSet(torch.empty(0), torch.empty(0))
+
+    previous_solutions = None
+    # TODO initialize transforms - maybe do so only at first contact since that's when we can narrow down its translation
+    world_to_link = initialization.initialize_transform_estimates(batch, env_process.freespace_ranges,
+                                                                  chsel.initialization.InitMethod.RANDOM,
+                                                                  None,
+                                                                  device=env_process.device,
+                                                                  dtype=env_process.dtype)
+
+    while not ctrl.ctrl.done():
+        action = ctrl.control(obs, info)
+        action = action['dxyz']
+        if action is None:
+            break
+        observation, reward, done, info = env.step(action)
+        # TODO process info (query contact detector, and feed transformed known robot points as free points)
+        # TODO do registration
+        known_pos, known_sdf = known_sdf_voxels.get_known_pos_and_values()
+        free_pos, _ = env_process.free_voxels.get_known_pos_and_values()
+        free_sem = [chsel.SemanticsClass.FREE] * free_pos.shape[0]
+        positions = torch.cat((known_pos, free_pos), dim=0)
+        semantics = np.concatenate((known_sdf.cpu().numpy(), np.asarray(free_sem, dtype=object)), axis=0)
+        registration = chsel.CHSEL(env_process.target_sdf, positions, semantics,
+                                   free_voxels=env_process.free_voxels,
+                                   known_sdf_voxels=known_sdf_voxels,
+                                   qd_iterations=100, free_voxels_resolution=0.005)
+        res, previous_solutions = registration.register(initial_tsf=world_to_link, batch=batch,
+                                                        iterations=registration_iterations,
+                                                        low_cost_transform_set=previous_solutions, )
+        world_to_link = chsel.solution_to_world_to_link_matrix(res)
+
+        # TODO broadcast registration
 
 
 def main(args):
@@ -203,13 +232,14 @@ def main(args):
 
     np.set_printoptions(suppress=True, precision=2, linewidth=200)
     env = RealPokeGetter.env(level, seed=args.seed)
+    env_process = poke_real_nonros.PokeRealNoRosEnv(level, device="cuda")
 
     # move to the actual left side
     # env.vis.clear_visualizations(["0", "0a", "1", "1a", "c", "reaction", "tmptbest", "residualmag"])
     if args.home:
         return
 
-    run_poke(env, args.seed)
+    run_poke(env, env_process, args.seed)
     env.vis.clear_visualizations()
 
 
