@@ -248,8 +248,11 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
     plot_estimate_set(env_process, env.vis, world_to_link)
 
     while not ctrl.ctrl.done():
-        action = ctrl.control(obs, info)
-        action = action['dxyz']
+        # action = ctrl.control(obs, info)
+        # action = action['dxyz']
+        # TODO remove after debugging contact detector
+        action = [0, 0, 0]
+
         # finished a probe, do registration
         if action is None:
             logger.info("Finished a probe, potentially doing registration now")
@@ -281,6 +284,8 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
             pt, _ = env.contact_detector.get_last_contact_location(visualizer=env.vis)
             if pt is not None:
                 known_sdf_voxels[pt] = torch.zeros(pt.shape[0])
+                known_pos, _ = known_sdf_voxels.get_known_pos_and_values()
+                env.vis.draw_points("contact_points", known_pos.cpu(), color=(1, 1, 0), scale=2)
             # TODO observe pose and add points transformed by it to free_voxels
 
 

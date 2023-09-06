@@ -210,7 +210,7 @@ class RealPokeEnv(RealArmEnv):
         self.contact_detector.clear()
         return np.copy(self.state), None
 
-    def _setup_robot_ros(self, residual_threshold=15., residual_precision=None):
+    def _setup_robot_ros(self, residual_threshold=10., residual_precision=None):
         victor = Victor(force_trigger=5.0)
         self.robot = victor
         # adjust timeout according to velocity (at vel = 0.1 we expect 400s per 1m)
