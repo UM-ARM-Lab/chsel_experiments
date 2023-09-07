@@ -125,6 +125,28 @@ class PokingControllerWrapper:
         self.force_threshold = force_threshold
         self.ctrl = PokingController(*args, **kwargs)
 
+        self.saved_joint_configs = [
+            [1.596531670764051, 1.5640122367920501, -2.3320013361672127, -1.980986564513606, 0.1171677534898914,
+             -0.3974303937570251, 0.6592761804798404],
+            [1.6069758629250699, 1.4694417820212444, -2.302824302505976, -2.046857676894375, 0.12060425407812483,
+             -0.510443671938737, 0.5845133124919473],
+            [1.5656278301575066, 1.438050303293927, -2.309229451312202, -2.0842905232702638, 0.0863411632068023,
+             -0.6218091791013209, 0.6168126561910316],
+            [1.683819012628526, 1.4793588478780806, -2.4245244659474716, -1.9678945777411994, -0.1468458715720748,
+             -0.3949574489571791, 0.7730294845912163],
+            [1.6491966467124282, 1.432496993190565, -2.4274322583305383, -2.0504654679351235, -0.09271408636280241,
+             -0.5357265515166165, 0.7307451243496942],
+            [1.5989538623709967, 1.4193558711454748, -2.450392655107226, -2.075207679199154, -0.13303860641706683,
+             -0.5926220787082079, 0.7606238942529663],
+            [1.442448274154808, 1.7144911381966708, -2.307101532361869, -1.964294336885712, 0.14747010585781015,
+             -0.4033001473254046, 0.8275282267156171],
+            [1.3451036509356318, 1.7401878330494536, -2.3350274727818725, -2.0341173073164844, 0.12718972936455228,
+             -0.5052708010699093, 0.9406847762485483],
+            [1.313172163083507, 1.7168266839146489, -2.3307851171133454, -2.074445422574475, 0.10394819479923677,
+             -0.5939435192993551, 0.9748781667416939]]
+        if len(self.saved_joint_configs):
+            assert len(self.saved_joint_configs) == len(self.ctrl.target_yz)
+
     @classmethod
     def get_name(cls):
         return "predefined_poking_ctrl"
@@ -144,8 +166,14 @@ class PokingControllerWrapper:
 
         self.env.robot.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=self.env.vel / 2)
         # self.env.return_to_rest(self.env.robot.left_arm_group)
-        self.env.robot.plan_to_pose(self.env.robot.left_arm_group, self.env.EE_LINK_NAME,
-                                    target_pos + self.env.REST_ORIENTATION)
+        # use stored targets
+        if len(self.saved_joint_configs):
+            self.env.robot.plan_to_joint_config(self.env.robot.left_arm_group, self.saved_joint_configs[0])
+            self.saved_joint_configs = self.saved_joint_configs[1:]
+        else:
+            self.env.robot.plan_to_pose(self.env.robot.left_arm_group, self.env.EE_LINK_NAME,
+                                        target_pos + self.env.REST_ORIENTATION)
+
         self.env.enter_cartesian_mode()
         self.ctrl.push_i = 0
 
@@ -153,6 +181,7 @@ class PokingControllerWrapper:
         rospy.sleep(0.3)
         self.env.recalibrate_static_wrench()
         self.env.reset()
+        logger.info(self.env._obs_joints())
 
     def control(self, obs, info=None):
         with self.env.motion_status_input_lock:
@@ -311,16 +340,16 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                                                                                        init_pts,
                                                                                        device=env_process.device,
                                                                                        dtype=env_process.dtype).inverse()
-                # first time, refine initial estimate around contact points
-                if previous_solutions is None:
-                    world_to_link = world_to_link_centroid
+                # # first time, refine initial estimate around contact points
+                # if previous_solutions is None:
+                #     world_to_link = world_to_link_centroid
                 # plot_estimate_set(env_process, env.vis, world_to_link, downsample=30)
                 # evaluate these
                 rmse = registration.evaluate_homogeneous(world_to_link_centroid)
                 rmse_centroid_idx = torch.argsort(rmse)
 
                 res, previous_solutions = registration.register(initial_tsf=world_to_link, batch=batch,
-                                                                iterations=2,
+                                                                iterations=1 if num_registers is 1 else 2,
                                                                 low_cost_transform_set=previous_solutions, )
                 world_to_link = chsel.solution_to_world_to_link_matrix(res)
                 # plot latest registration
@@ -330,7 +359,7 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                 rmse = res.rmse
                 rmse_reg_idx = torch.argsort(rmse)
 
-                if num_registers < 4:
+                if num_registers < 5:
                     world_to_link = torch.cat((world_to_link_centroid[rmse_centroid_idx[:batch // 2]],
                                                world_to_link[rmse_reg_idx[:batch // 2]]))
                 else:
@@ -372,7 +401,7 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                     # pt = pt[torch.argmax(pt[:, 0])]
                     pt = world_frame_free_pts[torch.argmax(world_frame_free_pts[:, 0])]
                     pt = pt.reshape(1, 3)
-                    pt[:, 0] += 0.005
+                    pt[:, 0] += 0.01
                 if pt is not None:
                     # filter point - it can't be too far (very noisy)
                     y_diff = pt[:, 1] - env.REST_POS[1]

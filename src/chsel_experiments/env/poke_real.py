@@ -265,6 +265,14 @@ class RealPokeEnv(RealArmEnv):
         state = self._observe_ee(return_z=True)
         return state
 
+    def _obs_joints(self):
+        status = self.robot.get_left_arm_status()
+        canonical_joints = [status.measured_joint_position.joint_1, status.measured_joint_position.joint_2,
+                            status.measured_joint_position.joint_3, status.measured_joint_position.joint_4,
+                            status.measured_joint_position.joint_5, status.measured_joint_position.joint_6,
+                            status.measured_joint_position.joint_7]
+        return canonical_joints
+
     # --- control (commonly overridden)
     def _unpack_action(self, action):
         dx = action[0] * self.MAX_PUSH_DIST
