@@ -334,7 +334,7 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                                            qd_iterations=100, free_voxels_resolution=0.005)
                 init_pts = known_pos.clone()
                 init_pts[:, 0] += 0.01
-                world_to_link_centroid = initialization.initialize_transform_estimates(batch,
+                world_to_link_centroid = initialization.initialize_transform_estimates(1000,
                                                                                        env_process.freespace_ranges,
                                                                                        chsel.initialization.InitMethod.CONTACT_CENTROID,
                                                                                        init_pts,
@@ -362,6 +362,12 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                 if num_registers < 5:
                     world_to_link = torch.cat((world_to_link_centroid[rmse_centroid_idx[:batch // 2]],
                                                world_to_link[rmse_reg_idx[:batch // 2]]))
+                elif num_registers < 7:
+                    world_to_link = torch.cat((world_to_link_centroid[rmse_centroid_idx[:10]],
+                                               world_to_link[rmse_reg_idx[:20]]))
+                elif num_registers < 8:
+                    world_to_link = torch.cat((world_to_link_centroid[rmse_centroid_idx[:5]],
+                                               world_to_link[rmse_reg_idx[:25]]))
                 else:
                     # center around best estimate with perturbations for next round
                     best_tsf_guess = world_to_link[torch.argmin(res.rmse)]
@@ -405,7 +411,7 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                 if pt is not None:
                     # filter point - it can't be too far (very noisy)
                     y_diff = pt[:, 1] - env.REST_POS[1]
-                    if torch.any(torch.abs(y_diff) > 0.1):
+                    if torch.any(torch.abs(y_diff) > 0.06):
                         pt = None
 
                 if pt is not None:
