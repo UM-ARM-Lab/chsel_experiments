@@ -225,7 +225,8 @@ def randomly_downsample(seq, seed, num=10):
 
 
 def plot_estimate_set(env: poke_real_nonros.PokeRealNoRosEnv, vis, estimate_set, ns="estimate_set", downsample=10):
-    # estimate_set = estimate_set.inverse()
+    # estimate set is world to link
+    estimate_set = estimate_set.inverse()
     vis.clear_visualization_after(ns, 0)
     estimate_set = randomly_downsample(estimate_set, 64, num=downsample)
     for i, T in enumerate(estimate_set):
@@ -262,21 +263,22 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
     env.recalibrate_static_wrench()
     obs, info = env.reset()
 
-    known_sdf_voxels = pv.VoxelSet(torch.empty(0, 3), torch.empty(0))
+    known_sdf_voxels = pv.VoxelSet(torch.empty(0, 3, device=env_process.device),
+                                   torch.empty(0, device=env_process.device))
 
     previous_solutions = None
     # visualize workspace
     draw_AABB(env.vis, env_process.freespace_ranges)
 
-    # TODO initialize transforms - maybe do so only at first contact since that's when we can narrow down its translation
+    # initialize transforms - maybe do so only at first contact since that's when we can narrow down its translation
     world_to_link = initialization.initialize_transform_estimates(batch, env_process.freespace_ranges,
                                                                   chsel.initialization.InitMethod.RANDOM,
                                                                   None,
                                                                   device=env_process.device,
-                                                                  dtype=env_process.dtype)
+                                                                  dtype=env_process.dtype).inverse()
     # plot these transforms
-    plot_estimate_set(env_process, env.vis, world_to_link)
-
+    plot_estimate_set(env_process, env.vis, world_to_link, downsample=30)
+    num_registers = 0
     while not ctrl.ctrl.done():
         action = ctrl.control(obs, info)
         action = action['dxyz']
@@ -290,8 +292,9 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
             logger.info("Number of contact points: {}".format(len(known_pos)))
             # skip if we haven't made any contact yet
             # TODO reduce required number of points before we start registration
-            if len(known_pos) > 20:
-                # TODO do registration
+            if len(known_pos) > 1:
+                num_registers += 1
+                # do registration
                 free_pos, _ = env_process.free_voxels.get_known_pos_and_values()
                 free_sem = [chsel.SemanticsClass.FREE] * free_pos.shape[0]
                 positions = torch.cat((known_pos, free_pos), dim=0)
@@ -300,18 +303,46 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                                            free_voxels=env_process.free_voxels,
                                            known_sdf_voxels=known_sdf_voxels,
                                            qd_iterations=100, free_voxels_resolution=0.005)
+                init_pts = known_pos.clone()
+                init_pts[:, 0] += 0.01
+                world_to_link_centroid = initialization.initialize_transform_estimates(batch,
+                                                                                       env_process.freespace_ranges,
+                                                                                       chsel.initialization.InitMethod.CONTACT_CENTROID,
+                                                                                       init_pts,
+                                                                                       device=env_process.device,
+                                                                                       dtype=env_process.dtype).inverse()
+                # first time, refine initial estimate around contact points
+                if previous_solutions is None:
+                    world_to_link = world_to_link_centroid
+                # plot_estimate_set(env_process, env.vis, world_to_link, downsample=30)
+                # evaluate these
+                rmse = registration.evaluate_homogeneous(world_to_link_centroid)
+                rmse_centroid_idx = torch.argsort(rmse)
+
                 res, previous_solutions = registration.register(initial_tsf=world_to_link, batch=batch,
-                                                                iterations=registration_iterations,
+                                                                iterations=2,
                                                                 low_cost_transform_set=previous_solutions, )
                 world_to_link = chsel.solution_to_world_to_link_matrix(res)
-
                 # plot latest registration
-                plot_estimate_set(env_process, env.vis, world_to_link)
+                plot_estimate_set(env_process, env.vis, world_to_link, downsample=30)
+
+                # mix top half from centroid and top half from ours
+                rmse = res.rmse
+                rmse_reg_idx = torch.argsort(rmse)
+
+                if num_registers < 4:
+                    world_to_link = torch.cat((world_to_link_centroid[rmse_centroid_idx[:batch // 2]],
+                                               world_to_link[rmse_reg_idx[:batch // 2]]))
+                else:
+                    # center around best estimate with perturbations for next round
+                    best_tsf_guess = world_to_link[torch.argmin(res.rmse)]
+                    world_to_link = initialization.reinitialize_transform_estimates(batch, best_tsf_guess)
+
         else:
             logger.info("Executing action: {}".format(action))
-            observation, reward, done, info = env.step(action)
-            # TODO observe pose and add points transformed by it to free_voxels
-            _, _, pose = env.contact_detector.observation_history[0]
+            obs, reward, done, info = env.step(action)
+            # observe pose and add points transformed by it to free_voxels
+            pose = env._obs_pose()
             link_to_current_tf = pk.Transform3d(pos=pose[0], rot=pk.xyzw_to_wxyz(torch.tensor(pose[1]))).to(
                 device=env_process.device, dtype=env_process.dtype)
             world_frame_free_pts = link_to_current_tf.transform_points(robot_interior_pts)
@@ -334,23 +365,23 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                 logger.info("Detected force threshold exceeded, adding contact point")
                 # observe contact point from detector and add it to known_sdf_voxels
                 pt, _ = env.contact_detector.get_last_contact_location(visualizer=env.vis)
-                if torch.abs(obs[0] - env.REST_POS[0]) < 0.02:
+                if torch.abs(torch.tensor(obs[0]) - env.REST_POS[0]) < 0.02:
                     # we're at the first series of pokes, is aligned so has to be at the tip
                     # by default assume it is detected at the tip of the end effector
                     # the transformed point with the highest x
                     # pt = pt[torch.argmax(pt[:, 0])]
-                    pt = pt[world_frame_free_pts[:, 0]]
+                    pt = world_frame_free_pts[torch.argmax(world_frame_free_pts[:, 0])]
                     pt = pt.reshape(1, 3)
                     pt[:, 0] += 0.005
                 if pt is not None:
                     # filter point - it can't be too far (very noisy)
-                    x_diff = pt[:, 0] - env.REST_POS[0]
-                    if torch.any(torch.abs(x_diff) > 0.1):
+                    y_diff = pt[:, 1] - env.REST_POS[1]
+                    if torch.any(torch.abs(y_diff) > 0.1):
                         pt = None
 
                 if pt is not None:
                     logger.info("Added contact points: {}".format(pt))
-                    known_sdf_voxels[pt] = torch.zeros(pt.shape[0])
+                    known_sdf_voxels[pt] = torch.zeros(pt.shape[0], device=env_process.device)
                     known_pos, _ = known_sdf_voxels.get_known_pos_and_values()
                     env.vis.ros.draw_points("contact_points", known_pos.cpu(), color=(1, 1, 0), scale=2)
 

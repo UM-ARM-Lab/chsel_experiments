@@ -188,7 +188,7 @@ class RealPokeEnv(RealArmEnv):
     def control_cost(cls):
         return np.diag([1 for _ in range(cls.nu)])
 
-    def __init__(self, *args, seed=0, environment_level=0, vel=0.4, downsample_info=50, use_cameras=True, **kwargs):
+    def __init__(self, *args, seed=0, environment_level=0, vel=0.3, downsample_info=50, use_cameras=True, **kwargs):
         self.seed = seed
         level = Levels(environment_level)
         save_path = os.path.join(cfg.DATA_DIR, DIR, level.name)
