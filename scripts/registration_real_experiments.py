@@ -28,6 +28,7 @@ from base_experiments.util import MakedirsFileHandler
 import pytorch_seed as rand
 
 import pytorch_volumetric as pv
+import pytorch_kinematics as pk
 from pytorch_kinematics import transforms as tf
 import torch
 import chsel
@@ -74,7 +75,7 @@ class StubContactSet(ContactSet):
 def predetermined_poke_range():
     # y,z order of poking
     return {
-        poke_real_nonros.Levels.DRILL: ((0.0, 0.05, -0.06), (0.0, 0.05, 0.08)),
+        poke_real_nonros.Levels.DRILL: ((0.0, 0.06, -0.07), (0.0, 0.05, 0.08)),
         poke_real_nonros.Levels.DRILL_OPPOSITE: ((0.07, -0.11), (-0.03, 0.05, 0.13)),
         poke_real_nonros.Levels.MUSTARD: ((0.0, 0.05), (-0.02, 0.04, 0.13)),
         poke_real_nonros.Levels.MUSTARD_SIDEWAYS: ((0.05, 0.12), (-0.02, 0.04, 0.13)),
@@ -131,7 +132,18 @@ class PokingControllerWrapper:
     def head_to_next_poke_yz(self):
         target_pos = [self.ctrl.x_rest] + list(self.ctrl.target_yz[0])
         logger.info("Moving to next target: {}".format(target_pos))
+        # obs = self.env._obs()
+        # # cartesian control to get close to the goal
+        # delta = np.array(target_pos) - obs
+        # kp = 20
+        # while np.linalg.norm(delta) > 0.01:
+        #     delta = np.array(target_pos) - obs
+        #     u = kp * delta
+        #     self.env.step(u)
+        #     obs = self.env._obs()
+
         self.env.robot.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=self.env.vel / 2)
+        # self.env.return_to_rest(self.env.robot.left_arm_group)
         self.env.robot.plan_to_pose(self.env.robot.left_arm_group, self.env.EE_LINK_NAME,
                                     target_pos + self.env.REST_ORIENTATION)
         self.env.enter_cartesian_mode()
@@ -175,18 +187,24 @@ class PokingControllerWrapper:
                 # directly go to next target rather than return backward
                 assert isinstance(self.env, RealPokeEnv)
 
+                obs = self.env._obs()
                 logger.info(f"Finished probe at x={obs[0]} , moving back")
                 # move back so planning is allowed (don't start in collision)
-                u[0] = -0.7
+                u[0] = -0.8
                 # max 5 steps
-                for j in range(5):
-                    if obs[0] > self.ctrl.x_rest:
+                # suppress early exit due to excessive force since we are probably in contact
+                self.env.suppress_cartesian_force_abortion = True
+                for j in range(7):
+                    if obs[0] < self.ctrl.x_rest:
                         break
-                    obs, _, _, _ = self.env.step(u)
+                    self.env.step(u)
+                    obs = self.env._obs()
+                self.env.suppress_cartesian_force_abortion = False
 
                 self.ctrl.target_yz = self.ctrl.target_yz[1:]
                 if not self.ctrl.done():
-                    logger.info("Finished moving back, moving to start of next yz")
+                    obs = self.env._obs()
+                    logger.info(f"Finished moving back (to {obs}), moving to start of next yz")
                     self.head_to_next_poke_yz()
                 return {'dxyz': None}
 
@@ -229,6 +247,18 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                                    x_rest=env.REST_POS[0], push_forward_count=5)
     num_probes = len(y_order) * len(z_order)
 
+    # setup robot SDF to contribute freespace points
+    robot_obj = pv.MeshObjectFactory("~/Downloads/closed_gripper_simple.obj", strip_package_prefix=False)
+    robot_sdf_gt = pv.MeshSDF(robot_obj)
+    robot_sdf = pv.CachedSDF("tri_victor", 0.005, robot_obj.bounding_box(0.01), robot_sdf_gt, device=env_process.device)
+
+    # query robot points
+    query_range = robot_obj.bounding_box(0.0)
+    coords, pts = pv.get_coordinates_and_points_in_grid(0.005, query_range, device=env_process.device)
+    sdf_val, _ = robot_sdf(pts)
+    interior = sdf_val < 0
+    robot_interior_pts = pts[interior]
+
     env.recalibrate_static_wrench()
     obs, info = env.reset()
 
@@ -248,10 +278,10 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
     plot_estimate_set(env_process, env.vis, world_to_link)
 
     while not ctrl.ctrl.done():
-        # action = ctrl.control(obs, info)
-        # action = action['dxyz']
-        # TODO remove after debugging contact detector
-        action = [0, 0, 0]
+        action = ctrl.control(obs, info)
+        action = action['dxyz']
+        # # TODO remove after debugging contact detector
+        # action = [0, 0, 0]
 
         # finished a probe, do registration
         if action is None:
@@ -278,15 +308,54 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                 # plot latest registration
                 plot_estimate_set(env_process, env.vis, world_to_link)
         else:
+            logger.info("Executing action: {}".format(action))
             observation, reward, done, info = env.step(action)
-            # TODO process info (query contact detector, and feed transformed known robot points as free points)
-            # TODO observe contact point from detector and add it to known_sdf_voxels
-            pt, _ = env.contact_detector.get_last_contact_location(visualizer=env.vis)
-            if pt is not None:
-                known_sdf_voxels[pt] = torch.zeros(pt.shape[0])
-                known_pos, _ = known_sdf_voxels.get_known_pos_and_values()
-                env.vis.draw_points("contact_points", known_pos.cpu(), color=(1, 1, 0), scale=2)
             # TODO observe pose and add points transformed by it to free_voxels
+            _, _, pose = env.contact_detector.observation_history[0]
+            link_to_current_tf = pk.Transform3d(pos=pose[0], rot=pk.xyzw_to_wxyz(torch.tensor(pose[1]))).to(
+                device=env_process.device, dtype=env_process.dtype)
+            world_frame_free_pts = link_to_current_tf.transform_points(robot_interior_pts)
+            env_process.free_voxels[world_frame_free_pts] = 1
+
+            f_pts, _ = env_process.free_voxels.get_known_pos_and_values()
+            bc, all_pts = pv.get_coordinates_and_points_in_grid(env_process.freespace_resolution,
+                                                                env_process.freespace_ranges,
+                                                                dtype=env_process.dtype, device=env_process.device)
+            buffer = 0
+            interior_pts = (f_pts[:, 0] > bc[0][buffer]) & (f_pts[:, 0] < bc[0][-buffer - 1]) & \
+                           (f_pts[:, 1] > bc[1][buffer]) & (f_pts[:, 1] < bc[1][-buffer - 1]) & \
+                           (f_pts[:, 2] > bc[2][buffer]) & (f_pts[:, 2] < bc[2][-buffer - 1])
+            f_pts = f_pts[interior_pts]
+            env.vis.ros.draw_points(f"free.0", f_pts, color=(1, 0, 1), scale=0.2)
+
+            # TODO process info (query contact detector, and feed transformed known robot points as free points)
+            # only consider contact point if we are in force threshold
+            if info['reached_force_threshold']:
+                logger.info("Detected force threshold exceeded, adding contact point")
+                # observe contact point from detector and add it to known_sdf_voxels
+                pt, _ = env.contact_detector.get_last_contact_location(visualizer=env.vis)
+                if torch.abs(obs[0] - env.REST_POS[0]) < 0.02:
+                    # we're at the first series of pokes, is aligned so has to be at the tip
+                    # by default assume it is detected at the tip of the end effector
+                    # the transformed point with the highest x
+                    # pt = pt[torch.argmax(pt[:, 0])]
+                    pt = pt[world_frame_free_pts[:, 0]]
+                    pt = pt.reshape(1, 3)
+                    pt[:, 0] += 0.005
+                if pt is not None:
+                    # filter point - it can't be too far (very noisy)
+                    x_diff = pt[:, 0] - env.REST_POS[0]
+                    if torch.any(torch.abs(x_diff) > 0.1):
+                        pt = None
+
+                if pt is not None:
+                    logger.info("Added contact points: {}".format(pt))
+                    known_sdf_voxels[pt] = torch.zeros(pt.shape[0])
+                    known_pos, _ = known_sdf_voxels.get_known_pos_and_values()
+                    env.vis.ros.draw_points("contact_points", known_pos.cpu(), color=(1, 1, 0), scale=2)
+
+
+device = "cuda"
 
 
 def main(args):
@@ -295,7 +364,8 @@ def main(args):
 
     np.set_printoptions(suppress=True, precision=2, linewidth=200)
     env = RealPokeGetter.env(level, seed=args.seed)
-    env_process = poke_real_nonros.PokeRealNoRosEnv(level, device="cuda")
+    env.vis.clear_visualizations()
+    env_process = poke_real_nonros.PokeRealNoRosEnv(level, device=device)
 
     # move to the actual left side
     # env.vis.clear_visualizations(["0", "0a", "1", "1a", "c", "reaction", "tmptbest", "residualmag"])
@@ -303,7 +373,7 @@ def main(args):
         return
 
     run_poke(env, env_process, args.seed)
-    env.vis.clear_visualizations()
+    env.return_to_rest(env.robot.left_arm_group)
 
 
 if __name__ == "__main__":

@@ -199,6 +199,7 @@ class RealPokeEnv(RealArmEnv):
         # prevent saving gigantic arrays to csv
         self.downsample_info = downsample_info
         # listen for imprints (easier than working with the data directly...)
+        self.suppress_cartesian_force_abortion = False
 
     # def enter_cartesian_mode(self):
     #     self.robot.set_left_arm_control_mode(ControlMode.JOINT_IMPEDANCE, vel=self.vel)
@@ -210,7 +211,7 @@ class RealPokeEnv(RealArmEnv):
         self.contact_detector.clear()
         return np.copy(self.state), None
 
-    def _setup_robot_ros(self, residual_threshold=10., residual_precision=None):
+    def _setup_robot_ros(self, residual_threshold=7., residual_precision=None):
         victor = Victor(force_trigger=5.0)
         self.robot = victor
         # adjust timeout according to velocity (at vel = 0.1 we expect 400s per 1m)
@@ -247,7 +248,7 @@ class RealPokeEnv(RealArmEnv):
         self.state = self._obs()
 
         if residual_precision is None:
-            residual_precision = np.diag([1, 1, 0, 1, 1, 1])
+            residual_precision = np.diag([2., 1, 0, 1, 1, 1])
         # parallel visualizer for ROS and pybullet
         self._contact_detector = ContactDetector(residual_precision, window_size=50)
         self._contact_detector.register_contact_sensor(KukaResidualContactSensor("victor", residual_threshold,
@@ -279,6 +280,7 @@ class RealPokeEnv(RealArmEnv):
     def _do_action(self, action):
         self._clear_state_before_step()
         success = True
+        reached_force_threshold = False
         if action is not None:
             action = np.clip(action, *self.get_control_bounds())
             # normalize action such that the input can be within a fixed range
@@ -290,9 +292,10 @@ class RealPokeEnv(RealArmEnv):
             # if orientation is None:
             #     orientation = copy.deepcopy(self.REST_ORIENTATION)
 
+            stop_on_force_threshold = None if self.suppress_cartesian_force_abortion else 10.
             self.robot.move_delta_cartesian_impedance(self.ACTIVE_MOVING_ARM, dx=dx, dy=dy,
                                                       target_z=self.last_ee_pos[2] + dz,
-                                                      stop_on_force_threshold=10.,
+                                                      stop_on_force_threshold=stop_on_force_threshold,
                                                       # stop_callback=self._stop_push,
                                                       blocking=True, step_size=0.025,
                                                       # target_orientation=orientation
@@ -300,6 +303,7 @@ class RealPokeEnv(RealArmEnv):
             s = self.robot.cartesian.status
             if s.reached_joint_limit or s.reached_force_threshold or s.callback_stopped:
                 success = False
+            reached_force_threshold = s.reached_force_threshold
 
         full_info = self.aggregate_info()
         info = {}
@@ -309,6 +313,7 @@ class RealPokeEnv(RealArmEnv):
             else:
                 info[key] = value[::self.downsample_info]
         info['success'] = success
+        info['reached_force_threshold'] = reached_force_threshold
 
         return info
 
