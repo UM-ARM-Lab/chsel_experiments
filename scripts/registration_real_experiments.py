@@ -415,10 +415,37 @@ def run_poke(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealN
                         pt = None
 
                 if pt is not None:
+                    if num_registers == 1:
+                        pt[:, 2] += 0.02
                     logger.info("Added contact points: {}".format(pt))
                     known_sdf_voxels[pt] = torch.zeros(pt.shape[0], device=env_process.device)
                     known_pos, _ = known_sdf_voxels.get_known_pos_and_values()
                     env.vis.ros.draw_points("contact_points", known_pos.cpu(), color=(1, 1, 0), scale=2)
+
+
+def estimate_contact(env: poke_real.RealPokeEnv, env_process: poke_real_nonros.PokeRealNoRosEnv, seed=0,
+                     control_wait=0.):
+    rand.seed(seed)
+
+    env.recalibrate_static_wrench()
+    obs, info = env.reset()
+
+    known_sdf_voxels = pv.VoxelSet(torch.empty(0, 3, device=env_process.device),
+                                   torch.empty(0, device=env_process.device))
+
+    # visualize workspace
+    draw_AABB(env.vis, env_process.freespace_ranges)
+
+    while True:
+        action = [0, 0, 0]
+        env.step(action)
+        # observe contact point from detector and add it to known_sdf_voxels
+        pt, _ = env.contact_detector.get_last_contact_location(visualizer=env.vis)
+        if pt is not None:
+            logger.info("Added contact points: {}".format(pt))
+            known_sdf_voxels[pt] = torch.zeros(pt.shape[0], device=env_process.device)
+            known_pos, _ = known_sdf_voxels.get_known_pos_and_values()
+            env.vis.ros.draw_points("contact_points", known_pos.cpu(), color=(1, 1, 0), scale=2)
 
 
 device = "cuda"
@@ -439,6 +466,7 @@ def main(args):
         return
 
     run_poke(env, env_process, args.seed)
+    # estimate_contact(env, env_process, args.seed)
     env.return_to_rest(env.robot.left_arm_group)
 
 
