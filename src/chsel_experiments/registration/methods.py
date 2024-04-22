@@ -4,7 +4,8 @@ import chsel.sgd
 import pytorch_kinematics.transforms.rotation_conversions
 
 import numpy as np
-from chsel.registration_util import solution_to_world_to_link_matrix, initialize_qd_archive
+from chsel.registration_util import solution_to_world_to_link_matrix
+from chsel.quality_diversity import initialize_qd_archive
 from sklearn.neighbors import NearestNeighbors
 import torch
 
