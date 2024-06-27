@@ -6,7 +6,7 @@ import argparse
 import pybullet as p
 import pytorch_kinematics as tf
 from mmint_camera_utils.camera_utils.camera_utils import project_depth_image
-from mmint_camera_utils.ros_utils.utils import pose_to_matrix
+from mmint_tools import pose_to_matrix
 from mmint_camera_utils.camera_utils.point_cloud_utils import tr_pointcloud
 from arm_pytorch_utilities import rand
 from window_recorder.recorder import WindowRecorder

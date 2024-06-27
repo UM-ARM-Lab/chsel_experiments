@@ -147,7 +147,7 @@ class SingleSceneCamerasBaseEnv(MedBaseEnv):
         self.record_scene_pcs = record_scene_pcs
         self.scene_camera_indx = 1
 
-        super().__init__(*args, **kwargs)
+        MedBaseEnv.__init__(self, *args, **kwargs)
 
         self.scene_camera_parser = self._get_scene_camera_parser(camera_indx=self.scene_camera_indx)
         self.scene_camera_name = self.scene_camera_parser.camera_name
@@ -161,7 +161,7 @@ class SingleSceneCamerasBaseEnv(MedBaseEnv):
                                                     scene_name=self.scene_name, save_path=self.save_path,
                                                     verbose=False, buffered=self.buffered,
                                                     wrap_data=self.wrap_data,
-                                                    save_depth_img_as_numpy=True,
+                                                    save_depth_as_numpy=True,
                                                     record_pointcloud=self.record_scene_pcs)
         return scene_camera_parser
 
