@@ -64,28 +64,6 @@ class RealPokeLoader(TrajectoryLoader):
         return xu, y, cc
 
 
-class PokeBubbleCameraContactSensor(BubbleCameraContactSensor):
-    def _get_link_frame_deform_point(self, cache, camera):
-        # TODO hill climbing on imprint to find local maxima imprints to extract those as contact points
-        # NOT actually needed since I process the points from the bubbles offline afterwards
-        # return the undeformed point to prevent penetration with the model
-        depth_im = cache['ref_img']
-        mask = cache['mask']
-        # these are in optical/camera frame
-        # average in image space, then project the average to point cloud
-        vs, us, _ = np.nonzero(mask)
-        v, u = vs.mean(), us.mean()
-        # interpolation on the depth image to get depth value
-        d = bilinear_interpolate(depth_im, u, v)
-
-        pt = project_depth_points(u, v, d, self.K)
-        pt_l = camera.transform_pc(np.array(pt).reshape(1, -1), camera.optical_frame['depth'], self.link_frame)
-        cache['contact_avg_pixel'] = (v, u)
-        cache['contact_pt_link_frame'] = pt_l
-        return torch.tensor(pt_l[0], dtype=self.dtype, device=self.device)
-
-
-
 class ContactDetectorPokeRealArmBubble(ContactDetector):
     """Contact detector using the bubble gripper"""
 
@@ -95,14 +73,14 @@ class ContactDetectorPokeRealArmBubble(ContactDetector):
                  window_size=5, dtype=torch.float, device='cpu'):
         super().__init__(residual_precision, window_size=window_size, dtype=dtype, device=device)
         if camera_l is not None:
-            self.register_contact_sensor(PokeBubbleCameraContactSensor(camera_l, ee_link_frame,
-                                                                       imprint_threshold=imprint_threshold,
-                                                                       deform_number_threshold=deform_number_threshold,
-                                                                       dtype=dtype, device=device))
-            self.register_contact_sensor(PokeBubbleCameraContactSensor(camera_r, ee_link_frame,
-                                                                       imprint_threshold=imprint_threshold,
-                                                                       deform_number_threshold=deform_number_threshold,
-                                                                       dtype=dtype, device=device))
+            self.register_contact_sensor(BubbleCameraContactSensor(camera_l, ee_link_frame,
+                                                                   imprint_threshold=imprint_threshold,
+                                                                   deform_number_threshold=deform_number_threshold,
+                                                                   dtype=dtype, device=device))
+            self.register_contact_sensor(BubbleCameraContactSensor(camera_r, ee_link_frame,
+                                                                   imprint_threshold=imprint_threshold,
+                                                                   deform_number_threshold=deform_number_threshold,
+                                                                   dtype=dtype, device=device))
 
         else:
             rospy.logwarn("Creating contact detector without camera")
